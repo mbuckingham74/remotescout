@@ -174,6 +174,13 @@ def set_job_score(connection, job_id, score, fit_explanation):
     )
 
 
+def set_resolution(connection, job_id, employer_url, requisition_id=None):
+    connection.execute(
+        "UPDATE jobs SET employer_url = ?, requisition_id = ? WHERE id = ?",
+        (employer_url, requisition_id, job_id),
+    )
+
+
 def create_application(connection, job_id, applied_at, status="Applied", notes=None):
     cursor = connection.execute(
         "INSERT INTO applications (job_id, applied_at, status, notes) VALUES (?, ?, ?, ?)",
