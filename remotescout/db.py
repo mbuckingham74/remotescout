@@ -68,6 +68,17 @@ def get_applications(connection):
     ).fetchall()
 
 
+def get_applied_jobs(connection):
+    return connection.execute(
+        """
+        SELECT j.id AS job_id, j.source, j.source_job_id, j.identity_key,
+               j.employer_url, j.requisition_id, j.employer
+        FROM applications a
+        JOIN jobs j ON j.id = a.job_id
+        """
+    ).fetchall()
+
+
 def get_application_events(connection, application_id):
     return connection.execute(
         """
@@ -106,14 +117,27 @@ def create_job(connection, **fields):
     return cursor.lastrowid
 
 
-def _normalize_url(url):
+def normalize_url(url):
     parts = urlsplit(url)
     return urlunsplit(
         (parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, "")
     )
 
 
-def _identity_key(job):
+def normalize_employer_url(url):
+    parts = urlsplit(url)
+    return urlunsplit(
+        (
+            parts.scheme.lower(),
+            parts.netloc.lower(),
+            parts.path.rstrip("/"),
+            parts.query,
+            "",
+        )
+    )
+
+
+def identity_key(job):
     parts = [job.employer, job.title]
     if job.location:
         parts.append(job.location)
@@ -130,7 +154,7 @@ def upsert_job(connection, job: DiscoveredJob) -> int:
     else:
         existing = connection.execute(
             "SELECT id FROM jobs WHERE source = ? AND source_url = ?",
-            (job.source, _normalize_url(job.source_url)),
+            (job.source, normalize_url(job.source_url)),
         ).fetchone()
     if existing is not None:
         connection.execute(
@@ -163,7 +187,7 @@ def upsert_job(connection, job: DiscoveredJob) -> int:
         description=job.description,
         compensation=job.compensation,
         posted_at=job.posted_at,
-        identity_key=_identity_key(job),
+        identity_key=identity_key(job),
     )
 
 
