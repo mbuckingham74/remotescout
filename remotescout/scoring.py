@@ -52,6 +52,7 @@ provided resume and job posting."""
 TOOL_SCHEMA = {
     "name": TOOL_NAME,
     "description": "Report the job-fit evaluation for the candidate.",
+    "strict": True,
     "input_schema": {
         "type": "object",
         "properties": {
@@ -75,6 +76,7 @@ TOOL_SCHEMA = {
             },
         },
         "required": ["score", "fit_explanation", "strengths", "gaps"],
+        "additionalProperties": False,
     },
 }
 

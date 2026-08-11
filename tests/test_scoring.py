@@ -10,6 +10,7 @@ from remotescout.scoring import (
     MissingApiKeyError,
     ScoreResult,
     ScoringError,
+    TOOL_SCHEMA,
     build_prompt,
     meets_threshold,
     score_job,
@@ -274,6 +275,7 @@ def test_model_config_passed_to_client(monkeypatch):
     assert call["model"] == "claude-test-1"
     assert call["tool_choice"] == {"type": "tool", "name": "score_job_fit"}
     assert call["tools"][0]["name"] == "score_job_fit"
+    assert call["tools"][0]["strict"] is True
     assert call["tools"][0]["input_schema"]["required"] == [
         "score",
         "fit_explanation",
@@ -281,3 +283,39 @@ def test_model_config_passed_to_client(monkeypatch):
         "gaps",
     ]
     assert DEFAULT_MODEL == "claude-sonnet-5"
+
+
+def test_tool_schema_enables_strict_mode():
+    assert TOOL_SCHEMA["strict"] is True
+
+
+def test_tool_schema_declares_expected_field_types():
+    properties = TOOL_SCHEMA["input_schema"]["properties"]
+    assert properties["score"]["type"] == "integer"
+    assert properties["fit_explanation"]["type"] == "string"
+    assert properties["strengths"]["type"] == "array"
+    assert properties["strengths"]["items"]["type"] == "string"
+    assert properties["gaps"]["type"] == "array"
+    assert properties["gaps"]["items"]["type"] == "string"
+
+
+def test_tool_schema_requires_all_fields():
+    assert TOOL_SCHEMA["input_schema"]["required"] == [
+        "score",
+        "fit_explanation",
+        "strengths",
+        "gaps",
+    ]
+
+
+def test_tool_schema_prohibits_unexpected_properties():
+    assert TOOL_SCHEMA["input_schema"]["additionalProperties"] is False
+
+
+def test_wrong_gaps_type_rejected():
+    client = FakeClient(make_tool_use_message(**valid_fields(gaps=["ok", 5])))
+    with pytest.raises(ScoringError):
+        score_job(make_job(), "resume", client=client)
+    client = FakeClient(make_tool_use_message(**valid_fields(gaps="not a list")))
+    with pytest.raises(ScoringError):
+        score_job(make_job(), "resume", client=client)
