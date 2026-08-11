@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Recommendations - Remote Scout{% endblock %}
+{% block content %}
+<h2>Recommendations for {{ day }}</h2>
+{% if recommendations %}
+<table>
+  <thead>
+    <tr>
+      <th>Score</th>
+      <th>Company</th>
+      <th>Position</th>
+      <th>Fit</th>
+      <th>Apply</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for job in recommendations %}
+    <tr>
+      <td>{{ job["score"] }}</td>
+      <td>{{ job["employer"] }}</td>
+      <td>{{ job["title"] }}</td>
+      <td>{{ job["explanation"] }}</td>
+      <td>
+        {% if job["employer_url"] %}
+        <a href="{{ job['employer_url'] }}">Employer Site</a>
+        {% else %}
+        <span class="muted">Pending</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty-state">No recommendations for today yet.</p>
+{% endif %}
+{% endblock %}

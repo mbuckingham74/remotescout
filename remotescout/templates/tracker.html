@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Tracker - Remote Scout{% endblock %}
+{% block content %}
+<h2>Application Tracker</h2>
+{% if applications %}
+<table>
+  <thead>
+    <tr>
+      <th>Company</th>
+      <th>Position</th>
+      <th>Applied</th>
+      <th>Status</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for app in applications %}
+    <tr>
+      <td>{{ app["employer"] }}</td>
+      <td>{{ app["title"] }}</td>
+      <td>{{ app["applied_at"] }}</td>
+      <td>{{ app["status"] }}</td>
+      <td>{{ app["notes"] }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty-state">No applications yet.</p>
+{% endif %}
+{% endblock %}
