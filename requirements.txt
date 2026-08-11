@@ -1,4 +1,6 @@
 flask>=3.0
 pypdf>=4.0
 scrapling>=0.4
+anthropic>=0.40
+python-dotenv>=1.0
 pytest>=8.0

@@ -1,7 +1,11 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(BASE_DIR / ".env")
 
 
 def load_config():
@@ -15,6 +19,7 @@ def load_config():
             str(BASE_DIR / "docs" / "Michael-Buckingham-Resume-Infrastructure-Delivery-Director.pdf"),
         ),
         "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
+        "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
         "RECOMMENDATION_THRESHOLD": float(
             os.environ.get("REMOTESCOUT_RECOMMENDATION_THRESHOLD", "70")
         ),

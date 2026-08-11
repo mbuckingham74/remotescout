@@ -167,6 +167,13 @@ def upsert_job(connection, job: DiscoveredJob) -> int:
     )
 
 
+def set_job_score(connection, job_id, score, fit_explanation):
+    connection.execute(
+        "UPDATE jobs SET score = ?, fit_explanation = ? WHERE id = ?",
+        (score, fit_explanation, job_id),
+    )
+
+
 def create_application(connection, job_id, applied_at, status="Applied", notes=None):
     cursor = connection.execute(
         "INSERT INTO applications (job_id, applied_at, status, notes) VALUES (?, ?, ?, ?)",
