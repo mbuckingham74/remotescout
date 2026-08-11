@@ -12,6 +12,7 @@
       <th>Status</th>
       <th>Notes</th>
       <th>Posting</th>
+      <th>Update</th>
     </tr>
   </thead>
   <tbody>
@@ -26,6 +27,32 @@
         {% if app["employer_url"] %}
         <a href="{{ app['employer_url'] }}" target="_blank" rel="noopener">Employer Posting</a>
         {% endif %}
+      </td>
+      <td>
+        <form method="post" action="{{ url_for('update_status', application_id=app['id']) }}">
+          <select name="status" class="status-select">
+            {% for status in supported_statuses %}
+            <option value="{{ status }}"{% if status == app["status"] %} selected{% endif %}>{{ status }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="btn btn-secondary">Update</button>
+        </form>
+      </td>
+    </tr>
+    <tr class="history-row">
+      <td colspan="7">
+        <details>
+          <summary>History</summary>
+          {% if history[app["id"]] %}
+          <ul class="history">
+            {% for event in history[app["id"]] %}
+            <li>{{ event["status"] }} &mdash; {{ event["event_date"]|date_label }}{% if event["note"] %} &middot; {{ event["note"] }}{% endif %}</li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="muted">No history yet.</p>
+          {% endif %}
+        </details>
       </td>
     </tr>
     {% endfor %}

@@ -143,3 +143,27 @@ th {
   color: var(--accent);
 }
 
+.status-select {
+  padding: 0.35rem 0.5rem;
+  margin-right: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+}
+
+details summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--accent);
+}
+
+.history {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.history li {
+  font-size: 0.875rem;
+  padding: 0.15rem 0;
+}
+

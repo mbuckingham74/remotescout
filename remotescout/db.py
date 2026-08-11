@@ -9,6 +9,8 @@ from remotescout.discovery.models import DiscoveredJob
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
+SUPPORTED_STATUSES = ("Applied", "Screen", "Interview", "Offer", "Rejected")
+
 
 def connect(path):
     connection = sqlite3.connect(path)
@@ -253,3 +255,24 @@ def add_application_event(connection, application_id, event_date, status=None, n
         (application_id, event_date, status, note),
     )
     return cursor.lastrowid
+
+
+def update_application_status(connection, application_id, new_status, event_date):
+    row = connection.execute(
+        "SELECT id, status FROM applications WHERE id = ?", (application_id,)
+    ).fetchone()
+    if row is None:
+        return "not_found", None
+    if row["status"] == new_status:
+        return "unchanged", None
+    try:
+        connection.execute(
+            "UPDATE applications SET status = ?, updated_at = datetime('now') WHERE id = ?",
+            (new_status, application_id),
+        )
+        add_application_event(connection, application_id, event_date, status=new_status)
+        connection.commit()
+        return "updated", application_id
+    except Exception:
+        connection.rollback()
+        raise

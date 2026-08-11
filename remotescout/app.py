@@ -1,9 +1,25 @@
 import datetime
 
-from flask import Flask, abort, current_app, g, redirect, render_template, url_for
+from flask import (
+    Flask,
+    abort,
+    current_app,
+    g,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 
 from remotescout import db, engine
 from remotescout.config import load_config
+
+
+def _format_date_label(value):
+    try:
+        return datetime.date.fromisoformat(value).strftime("%b %d, %Y")
+    except (TypeError, ValueError):
+        return value
 
 
 def create_app(config_overrides=None):
@@ -14,6 +30,8 @@ def create_app(config_overrides=None):
 
     db.init_db(app.config["DATABASE_PATH"])
     app.teardown_appcontext(db.close_db)
+
+    app.jinja_env.filters["date_label"] = _format_date_label
 
     @app.route("/")
     def recommendations():
@@ -57,6 +75,21 @@ def create_app(config_overrides=None):
         db.mark_job_applied(connection, job_id, today)
         return redirect(url_for("recommendations"))
 
+    @app.route("/applications/<int:application_id>/status", methods=["POST"])
+    def update_status(application_id):
+        new_status = request.form.get("status", "")
+        if new_status not in db.SUPPORTED_STATUSES:
+            abort(400)
+        result, _ = db.update_application_status(
+            db.get_db(),
+            application_id,
+            new_status,
+            datetime.date.today().isoformat(),
+        )
+        if result == "not_found":
+            abort(404)
+        return redirect(url_for("tracker"))
+
     @app.route("/tracker")
     def tracker():
         connection = db.get_db()
@@ -65,6 +98,11 @@ def create_app(config_overrides=None):
             row["id"]: db.get_application_events(connection, row["id"])
             for row in applications
         }
-        return render_template("tracker.html", applications=applications, history=history)
+        return render_template(
+            "tracker.html",
+            applications=applications,
+            history=history,
+            supported_statuses=db.SUPPORTED_STATUSES,
+        )
 
     return app
