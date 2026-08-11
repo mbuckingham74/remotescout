@@ -6,6 +6,10 @@ from remotescout.discovery.models import DiscoveredJob
 TOOL_NAME = "score_job_fit"
 DEFAULT_MODEL = "claude-sonnet-5"
 MAX_OUTPUT_TOKENS = 1024
+RETRY_CORRECTION = (
+    "Your previous response did not conform to the required output schema. "
+    "Return values exactly matching the provided schema."
+)
 
 SYSTEM_PROMPT = """\
 You are a job-fit evaluator. Score how well a candidate's resume matches a job posting, \
@@ -91,7 +95,7 @@ class ScoreResult:
     gaps: list[str] = field(default_factory=list)
 
 
-def build_prompt(job: DiscoveredJob, resume_text: str) -> dict:
+def build_prompt(job: DiscoveredJob, resume_text: str, correction=None) -> dict:
     lines = [
         f"Job title: {job.title}",
         f"Employer: {job.employer}",
@@ -104,9 +108,12 @@ def build_prompt(job: DiscoveredJob, resume_text: str) -> dict:
     lines.append("")
     lines.append("Candidate resume:")
     lines.append(resume_text)
+    content = "\n".join(lines)
+    if correction:
+        content = f"{content}\n\n{correction}"
     return {
         "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": "\n".join(lines)}],
+        "messages": [{"role": "user", "content": content}],
     }
 
 
@@ -145,6 +152,18 @@ def _extract_tool_result(message):
     raise ScoringError("Model response contained no score_job_fit tool result")
 
 
+def _score_once(client, model, prompt):
+    message = client.messages.create(
+        model=model,
+        max_tokens=MAX_OUTPUT_TOKENS,
+        system=prompt["system"],
+        messages=prompt["messages"],
+        tools=[TOOL_SCHEMA],
+        tool_choice={"type": "tool", "name": TOOL_NAME},
+    )
+    return _extract_tool_result(message)
+
+
 def score_job(job: DiscoveredJob, resume_text: str, client=None, model=None):
     if client is None:
         from anthropic import Anthropic
@@ -153,22 +172,20 @@ def score_job(job: DiscoveredJob, resume_text: str, client=None, model=None):
 
         config = load_config()
         api_key = config["ANTHROPIC_API_KEY"]
-        model = model or config["ANTHROPIC_MODEL"]
         if not api_key:
             raise MissingApiKeyError(
                 "ANTHROPIC_API_KEY is not set; cannot score jobs without it"
             )
         client = Anthropic(api_key=api_key)
-    prompt = build_prompt(job, resume_text)
-    message = client.messages.create(
-        model=model or DEFAULT_MODEL,
-        max_tokens=MAX_OUTPUT_TOKENS,
-        system=prompt["system"],
-        messages=prompt["messages"],
-        tools=[TOOL_SCHEMA],
-        tool_choice={"type": "tool", "name": TOOL_NAME},
-    )
-    return _extract_tool_result(message)
+        model = model or config["ANTHROPIC_MODEL"]
+    try:
+        return _score_once(client, model or DEFAULT_MODEL, build_prompt(job, resume_text))
+    except ScoringError:
+        return _score_once(
+            client,
+            model or DEFAULT_MODEL,
+            build_prompt(job, resume_text, correction=RETRY_CORRECTION),
+        )
 
 
 def meets_threshold(result: ScoreResult, threshold: int) -> bool:

@@ -35,18 +35,20 @@ def make_tool_use_message(**fields):
 
 
 class FakeMessages:
-    def __init__(self, message):
-        self.message = message
+    def __init__(self, *messages):
+        self.responses = list(messages)
         self.calls = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        return self.message
+        if len(self.responses) > 1:
+            return self.responses.pop(0)
+        return self.responses[0]
 
 
 class FakeClient:
-    def __init__(self, message):
-        self.messages = FakeMessages(message)
+    def __init__(self, *messages):
+        self.messages = FakeMessages(*messages)
 
 
 def valid_fields(**overrides):
@@ -68,6 +70,63 @@ def test_valid_response_parses():
     assert result.fit_explanation == "Strong program delivery leadership aligned with the role."
     assert result.strengths == ["Program governance", "Budget ownership"]
     assert result.gaps == ["No direct fintech domain experience"]
+    assert len(client.messages.calls) == 1
+
+
+def test_valid_first_response_single_request():
+    client = FakeClient(make_tool_use_message(**valid_fields()))
+    result = score_job(make_job(), "resume", client=client)
+    assert result.score == 84
+    assert len(client.messages.calls) == 1
+
+
+def test_invalid_then_valid_second_response_retries_once():
+    bad = make_tool_use_message(**valid_fields(strengths=["ok", 5]))
+    good = make_tool_use_message(**valid_fields())
+    client = FakeClient(bad, good)
+    result = score_job(make_job(), "resume", client=client)
+    assert result.score == 84
+    assert len(client.messages.calls) == 2
+    second_messages = client.messages.calls[1]["messages"]
+    assert "did not conform to the required output schema" in second_messages[0]["content"]
+    assert "score_job_fit" in second_messages[0]["content"] or "Return values" in second_messages[0]["content"]
+
+
+def test_invalid_then_invalid_raises_after_two_requests():
+    client = FakeClient(
+        make_tool_use_message(**valid_fields(score=999)),
+        make_tool_use_message(**valid_fields(score=-5)),
+    )
+    with pytest.raises(ScoringError):
+        score_job(make_job(), "resume", client=client)
+    assert len(client.messages.calls) == 2
+
+
+def test_malformed_strengths_exercises_retry_path():
+    bad = make_tool_use_message(**valid_fields(strengths=[{"text": "not a string"}]))
+    good = make_tool_use_message(**valid_fields())
+    client = FakeClient(bad, good)
+    result = score_job(make_job(), "resume", client=client)
+    assert result.score == 84
+    assert len(client.messages.calls) == 2
+
+
+def test_sdk_exception_propagates_without_retry():
+    class Boom(Exception):
+        pass
+
+    class FailingMessages:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            raise Boom("API error")
+
+    client = types.SimpleNamespace(messages=FailingMessages())
+    with pytest.raises(Boom):
+        score_job(make_job(), "resume", client=client)
+    assert len(client.messages.calls) == 1
 
 
 def test_score_zero_is_valid():
@@ -156,11 +215,13 @@ def test_threshold_helper():
 
 def test_missing_api_key_errors_only_on_scoring_call(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    def fail_if_constructed(*args, **kwargs):
+        raise AssertionError("Anthropic client constructed without a key")
+
+    monkeypatch.setattr("anthropic.Anthropic", fail_if_constructed)
     with pytest.raises(MissingApiKeyError, match="ANTHROPIC_API_KEY"):
         score_job(make_job(), "resume")
-    assert "ANTHROPIC_API_KEY" not in str(
-        [build_prompt(make_job(), "resume") for _ in range(1)]
-    )
 
 
 def test_prompt_contains_resume_and_job():
