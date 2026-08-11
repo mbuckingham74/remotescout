@@ -45,6 +45,12 @@ def default_fetch(url, timeout=20):
     return Fetcher.get(url, timeout=timeout)
 
 
+def default_dynamic_fetch(url, timeout=30):
+    from scrapling import DynamicFetcher
+
+    return DynamicFetcher.fetch(url, timeout=timeout * 1000, retries=1)
+
+
 def _normalize(text):
     text = (text or "").lower()
     text = text.replace("&", " and ")
@@ -196,25 +202,60 @@ def _resolve_generic_anchor(links, base_url, job):
     return ResolutionResult(resolved=True, employer_url=matches[0], method=CAREERS_PAGE)
 
 
-def _resolve_careers_page(url, job, fetch):
+def _collect_links(html):
+    collector = _AnchorCollector()
+    collector.feed(html)
+    return collector.links
+
+
+def _has_job_signals(links, job):
+    target = _normalize(job.title)
+    for href, text in links:
+        if _recognize_ats(href) is not None:
+            return True
+        normalized = _normalize(text)
+        if normalized and (normalized == target or normalized.startswith(target + " ")):
+            return True
+    return False
+
+
+def _resolve_anchors(links, base_url, job, fetch):
+    ats_results = _resolve_from_page_ats_links(links, job, fetch)
+    if ats_results:
+        if len(ats_results) == 1:
+            return ats_results[0]
+        return None
+    return _resolve_generic_anchor(links, base_url, job)
+
+
+def _resolve_careers_page(url, job, fetch, dynamic_fetch=None):
     response = fetch(url)
     if response.status != 200:
         return None
     html = getattr(response, "html_content", None)
     if not html:
         return None
-    collector = _AnchorCollector()
-    collector.feed(html)
-    ats_results = _resolve_from_page_ats_links(collector.links, job, fetch)
-    if ats_results:
-        if len(ats_results) == 1:
-            return ats_results[0]
+    links = _collect_links(html)
+    result = _resolve_anchors(links, url, job, fetch)
+    if result is not None:
+        return result
+    if _has_job_signals(links, job) or dynamic_fetch is None:
         return None
-    return _resolve_generic_anchor(collector.links, url, job)
+    try:
+        rendered = dynamic_fetch(url)
+    except Exception:
+        return None
+    if rendered.status != 200:
+        return None
+    rendered_html = getattr(rendered, "html_content", None)
+    if not rendered_html:
+        return None
+    return _resolve_anchors(_collect_links(rendered_html), url, job, fetch)
 
 
-def resolve_job(job: DiscoveredJob, fetch=None, timeout=20) -> ResolutionResult:
+def resolve_job(job: DiscoveredJob, fetch=None, dynamic_fetch=None, timeout=20) -> ResolutionResult:
     fetch = fetch or (lambda url: default_fetch(url, timeout=timeout))
+    dynamic_fetch = dynamic_fetch or default_dynamic_fetch
     urls = extract_urls(job)
     for url in urls:
         recognized = _recognize_ats(url)
@@ -225,7 +266,7 @@ def resolve_job(job: DiscoveredJob, fetch=None, timeout=20) -> ResolutionResult:
                 return result
     for url in urls:
         if _recognize_ats(url) is None:
-            result = _resolve_careers_page(url, job, fetch)
+            result = _resolve_careers_page(url, job, fetch, dynamic_fetch)
             if result is not None:
                 return result
     return ResolutionResult(resolved=False)

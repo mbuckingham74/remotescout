@@ -52,6 +52,22 @@ class FakeFetch:
         return response
 
 
+class RecordingDynamicFetch:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def __call__(self, url):
+        self.calls.append(url)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+EMPTY_PAGE = "<html><body></body></html>"
+
+
 GREENHOUSE_BOARD = "https://boards.greenhouse.io/acme/jobs/1234"
 GREENHOUSE_JOBS = {
     "jobs": [
@@ -125,10 +141,12 @@ def test_unrelated_external_url_not_auto_accepted():
     job = make_job(description="Our blog: https://blog.acme.com/engineering or https://acme.com/careers")
     no_links = "<html><body><p>No job links here</p></body></html>"
     fetch = FakeFetch(FakeResponse(html=no_links), FakeResponse(html=no_links))
-    result = resolve_job(job, fetch=fetch)
+    dynamic = RecordingDynamicFetch(FakeResponse(html=EMPTY_PAGE), FakeResponse(html=EMPTY_PAGE))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
     assert result.resolved is False
     assert result.employer_url is None
     assert len(fetch.calls) == 2
+    assert len(dynamic.calls) == 2
 
 
 def test_greenhouse_matching_posting_resolves():
@@ -251,8 +269,10 @@ def test_careers_page_clear_match_resolves():
 def test_careers_page_without_job_does_not_resolve():
     job = make_job(description="Careers: https://acme.com/careers")
     fetch = FakeFetch(FakeResponse(html="<html><body><a href=\"/about\">About us</a></body></html>"))
-    result = resolve_job(job, fetch=fetch)
+    dynamic = RecordingDynamicFetch(FakeResponse(html=EMPTY_PAGE))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
     assert result.resolved is False
+    assert len(dynamic.calls) == 1
 
 
 def test_careers_page_ambiguous_matches_do_not_resolve():
@@ -391,8 +411,10 @@ def test_partial_title_anchor_does_not_resolve():
     job = make_job(title="Group Product Manager, Finance Technology", description="Careers: https://acme.com/careers")
     html = "<html><body><a href=\"/jobs/gpm\">Group Product Manager</a></body></html>"
     fetch = FakeFetch(FakeResponse(html=html))
-    result = resolve_job(job, fetch=fetch)
+    dynamic = RecordingDynamicFetch(FakeResponse(html=EMPTY_PAGE))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
     assert result.resolved is False
+    assert len(dynamic.calls) == 1
 
 
 def test_title_in_middle_of_unrelated_anchor_text_does_not_resolve():
@@ -403,8 +425,10 @@ def test_title_in_middle_of_unrelated_anchor_text_does_not_resolve():
         "</body></html>"
     )
     fetch = FakeFetch(FakeResponse(html=html))
-    result = resolve_job(job, fetch=fetch)
+    dynamic = RecordingDynamicFetch(FakeResponse(html=EMPTY_PAGE))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
     assert result.resolved is False
+    assert len(dynamic.calls) == 1
 
 
 def test_two_prefix_compatible_anchors_unresolved():
@@ -438,3 +462,134 @@ def test_resolution_stored_without_touching_source_url(tmp_path):
         assert row["requisition_id"] == "1234"
         assert row["source_url"] == "https://weworkremotely.com/remote-jobs/acme-senior-product-manager"
         assert row["source"] == "weworkremotely"
+
+
+def test_static_resolution_never_triggers_dynamic():
+    job = make_job(description="Careers: https://acme.com/careers")
+    html = "<html><body><a href=\"/jobs/senior-product-manager\">Senior Product Manager</a></body></html>"
+    fetch = FakeFetch(FakeResponse(html=html))
+    dynamic = RecordingDynamicFetch(FakeResponse(html=EMPTY_PAGE))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved
+    assert result.method == CAREERS_PAGE
+    assert dynamic.calls == []
+
+
+def test_static_ats_resolution_never_triggers_dynamic():
+    job = make_job(description="Careers: https://acme.com/careers")
+    html = f"<html><body><a href=\"{GREENHOUSE_BOARD}\">Senior Product Manager</a></body></html>"
+    fetch = FakeFetch(FakeResponse(html=html), FakeResponse(json=GREENHOUSE_JOBS))
+    dynamic = RecordingDynamicFetch(FakeResponse(html=EMPTY_PAGE))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved
+    assert result.method == GREENHOUSE
+    assert dynamic.calls == []
+
+
+def test_empty_static_page_triggers_one_dynamic_fetch():
+    job = make_job(description="Careers: https://acme.com/careers")
+    fetch = FakeFetch(FakeResponse(html=EMPTY_PAGE))
+    dynamic = RecordingDynamicFetch(FakeResponse(html=EMPTY_PAGE))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved is False
+    assert len(dynamic.calls) == 1
+    assert dynamic.calls[0] == "https://acme.com/careers"
+
+
+def test_ambiguous_static_anchors_do_not_trigger_dynamic():
+    job = make_job(description="Careers: https://acme.com/careers")
+    html = (
+        "<html><body>"
+        "<a href=\"/jobs/a\">Senior Product Manager Remote - US</a>"
+        "<a href=\"/jobs/b\">Senior Product Manager Full-Time</a>"
+        "</body></html>"
+    )
+    fetch = FakeFetch(FakeResponse(html=html))
+    dynamic = RecordingDynamicFetch(FakeResponse(html=EMPTY_PAGE))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved is False
+    assert dynamic.calls == []
+
+
+def test_dynamic_page_reveals_greenhouse_link():
+    job = make_job(description="Careers: https://acme.com/careers")
+    rendered = f"<html><body><a href=\"{GREENHOUSE_BOARD}\">Senior Product Manager</a></body></html>"
+    fetch = FakeFetch(FakeResponse(html=EMPTY_PAGE), FakeResponse(json=GREENHOUSE_JOBS))
+    dynamic = RecordingDynamicFetch(FakeResponse(html=rendered))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved
+    assert result.method == GREENHOUSE
+    assert result.employer_url == GREENHOUSE_BOARD
+    assert result.requisition_id == "1234"
+    assert len(dynamic.calls) == 1
+    assert "boards-api.greenhouse.io" in fetch.calls[1]
+
+
+def test_dynamic_page_reveals_lever_link():
+    job = make_job(description="Careers: https://acme.com/careers")
+    rendered = f"<html><body><a href=\"{LEVER_POSTING}\">Senior Product Manager</a></body></html>"
+    fetch = FakeFetch(FakeResponse(html=EMPTY_PAGE), FakeResponse(json=LEVER_JOBS))
+    dynamic = RecordingDynamicFetch(FakeResponse(html=rendered))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved
+    assert result.method == LEVER
+    assert result.employer_url == LEVER_POSTING
+    assert result.requisition_id == "abc123-def456"
+    assert "api.lever.co" in fetch.calls[1]
+
+
+def test_dynamic_page_reveals_ashby_link():
+    job = make_job(description="Careers: https://acme.com/careers")
+    rendered = "<html><body><a href=\"https://jobs.ashbyhq.com/acme\">Senior Product Manager</a></body></html>"
+    fetch = FakeFetch(FakeResponse(html=EMPTY_PAGE), FakeResponse(json=ASHBY_JOBS))
+    dynamic = RecordingDynamicFetch(FakeResponse(html=rendered))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved
+    assert result.method == ASHBY
+    assert result.employer_url == ASHBY_POSTING
+    assert result.requisition_id == "x1y2z3"
+    assert "api.ashbyhq.com" in fetch.calls[1]
+
+
+def test_dynamic_page_reveals_generic_title_anchor():
+    job = make_job(description="Careers: https://acme.com/careers")
+    rendered = "<html><body><a href=\"/jobs/senior-product-manager\">Senior Product Manager</a></body></html>"
+    fetch = FakeFetch(FakeResponse(html=EMPTY_PAGE))
+    dynamic = RecordingDynamicFetch(FakeResponse(html=rendered))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved
+    assert result.method == CAREERS_PAGE
+    assert result.employer_url == "https://acme.com/jobs/senior-product-manager"
+
+
+def test_dynamic_page_stays_empty_unresolved():
+    job = make_job(description="Careers: https://acme.com/careers")
+    fetch = FakeFetch(FakeResponse(html=EMPTY_PAGE))
+    dynamic = RecordingDynamicFetch(FakeResponse(html="<html><body><a href=\"/about\">About</a></body></html>"))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved is False
+    assert len(dynamic.calls) == 1
+
+
+def test_dynamic_page_ambiguous_unresolved():
+    job = make_job(description="Careers: https://acme.com/careers")
+    rendered = (
+        "<html><body>"
+        "<a href=\"/jobs/a\">Senior Product Manager Remote - US</a>"
+        "<a href=\"/jobs/b\">Senior Product Manager Full-Time</a>"
+        "</body></html>"
+    )
+    fetch = FakeFetch(FakeResponse(html=EMPTY_PAGE))
+    dynamic = RecordingDynamicFetch(FakeResponse(html=rendered))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved is False
+    assert len(dynamic.calls) == 1
+
+
+def test_dynamic_fetch_exception_unresolved_no_second_attempt():
+    job = make_job(description="Careers: https://acme.com/careers")
+    fetch = FakeFetch(FakeResponse(html=EMPTY_PAGE))
+    dynamic = RecordingDynamicFetch(RuntimeError("browser launch failed"))
+    result = resolve_job(job, fetch=fetch, dynamic_fetch=dynamic)
+    assert result.resolved is False
+    assert len(dynamic.calls) == 1
