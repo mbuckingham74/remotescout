@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS recommendations (
 
 CREATE INDEX IF NOT EXISTS idx_recommendations_date ON recommendations (date);
 
+CREATE TABLE IF NOT EXISTS recommendation_days (
+    recommendation_date TEXT PRIMARY KEY,
+    completed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS applications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL UNIQUE REFERENCES jobs (id),

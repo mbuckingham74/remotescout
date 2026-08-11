@@ -56,6 +56,24 @@ def get_recommendations(connection, day):
     ).fetchall()
 
 
+def is_recommendation_day_complete(connection, recommendation_date):
+    return (
+        connection.execute(
+            "SELECT 1 FROM recommendation_days WHERE recommendation_date = ?",
+            (recommendation_date,),
+        ).fetchone()
+        is not None
+    )
+
+
+def mark_recommendation_day_complete(connection, recommendation_date):
+    connection.execute(
+        "INSERT OR REPLACE INTO recommendation_days (recommendation_date, completed_at) "
+        "VALUES (?, datetime('now'))",
+        (recommendation_date,),
+    )
+
+
 def get_applications(connection):
     return connection.execute(
         """
@@ -211,6 +229,22 @@ def create_application(connection, job_id, applied_at, status="Applied", notes=N
         (job_id, applied_at, status, notes),
     )
     return cursor.lastrowid
+
+
+def mark_job_applied(connection, job_id, applied_at, notes=None):
+    existing = connection.execute(
+        "SELECT id FROM applications WHERE job_id = ?", (job_id,)
+    ).fetchone()
+    if existing is not None:
+        return existing["id"]
+    try:
+        application_id = create_application(connection, job_id, applied_at, notes=notes)
+        add_application_event(connection, application_id, applied_at, status="Applied")
+        connection.commit()
+        return application_id
+    except Exception:
+        connection.rollback()
+        raise
 
 
 def add_application_event(connection, application_id, event_date, status=None, note=None):

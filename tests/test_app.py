@@ -21,6 +21,14 @@ def client(app):
     return app.test_client()
 
 
+@pytest.fixture(autouse=True)
+def no_engine(monkeypatch):
+    def build(connection, recommendation_date=None, **kwargs):
+        return []
+
+    monkeypatch.setattr("remotescout.engine.build_daily_recommendations", build)
+
+
 def test_application_starts(client):
     response = client.get("/")
     assert response.status_code == 200
@@ -51,7 +59,7 @@ def test_recommendations_page_renders(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "Recommendations" in response.get_data(as_text=True)
-    assert "No recommendations for today yet" in response.get_data(as_text=True)
+    assert "No strong matches today." in response.get_data(as_text=True)
 
 
 def test_tracker_page_renders(client):

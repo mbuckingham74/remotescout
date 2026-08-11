@@ -1015,3 +1015,188 @@ def test_applied_suppression_uses_safe_employer_normalization(app):
     assert scorer.calls == ["Platform Engineer"]
     assert resolver.calls == ["Platform Engineer"]
     assert recommendations == []
+
+
+def test_zero_result_run_creates_completed_day_marker(app):
+    jobs = [
+        make_job(
+            title="Plumber",
+            employer="Pipe Co.",
+            source_job_id="plumber-1",
+            source_url="https://weworkremotely.com/remote-jobs/plumber-1",
+        ),
+        make_job(
+            title="Junior Designer",
+            employer="Design Co.",
+            source_job_id="jd-1",
+            source_url="https://weworkremotely.com/remote-jobs/jd-1",
+        ),
+    ]
+    recommendations = run_pipeline(app, FakeDiscover(jobs), FakeScorer({}), FakeResolver({}))
+    assert recommendations == []
+    with app.app_context():
+        connection = db.get_db()
+        marker = connection.execute(
+            "SELECT 1 FROM recommendation_days WHERE recommendation_date = ?", (DAY,)
+        ).fetchone()
+        row_count = connection.execute(
+            "SELECT COUNT(*) FROM recommendations WHERE date = ?", (DAY,)
+        ).fetchone()[0]
+    assert marker is not None
+    assert row_count == 0
+
+
+def test_completed_zero_day_second_invocation_does_no_work(app):
+    job = make_job()
+    discover = FakeDiscover([job])
+    scorer = FakeScorer({"Senior Product Manager": result(55)})
+    resolver = FakeResolver(
+        {"Senior Product Manager": ok_resolution("https://acme.com/careers/spm")}
+    )
+    first = run_pipeline(app, discover, scorer, resolver)
+    assert first == []
+    assert discover.calls == 1
+    assert scorer.calls == ["Senior Product Manager"]
+    assert resolver.calls == []
+    second = run_pipeline(app, discover, scorer, resolver)
+    assert second == []
+    assert discover.calls == 1
+    assert scorer.calls == ["Senior Product Manager"]
+    assert resolver.calls == []
+
+
+def test_completed_one_result_day_is_marked_complete(app):
+    scorer = FakeScorer({"Senior Product Manager": result(90)})
+    resolver = FakeResolver(
+        {"Senior Product Manager": ok_resolution("https://acme.com/careers/spm")}
+    )
+    recommendations = run_pipeline(app, FakeDiscover([make_job()]), scorer, resolver)
+    assert len(recommendations) == 1
+    with app.app_context():
+        connection = db.get_db()
+        marker = connection.execute(
+            "SELECT 1 FROM recommendation_days WHERE recommendation_date = ?", (DAY,)
+        ).fetchone()
+    assert marker is not None
+
+
+def test_completed_three_result_day_is_marked_complete(app):
+    jobs, scorer_results, resolver_results = _make_n_jobs(3)
+    recommendations = run_pipeline(
+        app,
+        FakeDiscover(jobs),
+        FakeScorer(scorer_results),
+        FakeResolver(resolver_results),
+    )
+    assert len(recommendations) == 3
+    with app.app_context():
+        connection = db.get_db()
+        marker = connection.execute(
+            "SELECT 1 FROM recommendation_days WHERE recommendation_date = ?", (DAY,)
+        ).fetchone()
+    assert marker is not None
+
+
+def test_final_persistence_failure_leaves_no_rows_or_marker(app, monkeypatch):
+    jobs, scorer_results, resolver_results = _make_n_jobs(2)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("marker insert failed")
+
+    monkeypatch.setattr("remotescout.db.mark_recommendation_day_complete", boom)
+    with pytest.raises(RuntimeError):
+        run_pipeline(
+            app,
+            FakeDiscover(jobs),
+            FakeScorer(scorer_results),
+            FakeResolver(resolver_results),
+        )
+    with app.app_context():
+        connection = db.get_db()
+        row_count = connection.execute(
+            "SELECT COUNT(*) FROM recommendations WHERE date = ?", (DAY,)
+        ).fetchone()[0]
+        marker = connection.execute(
+            "SELECT 1 FROM recommendation_days WHERE recommendation_date = ?", (DAY,)
+        ).fetchone()
+    assert row_count == 0
+    assert marker is None
+
+
+def test_fatal_pipeline_exception_creates_no_completion_marker(app):
+    jobs, scorer_results, _ = _make_n_jobs(2)
+    resolver = FakeResolver(
+        results={"Platform Engineer 0": ok_resolution("https://acme.com/careers/pe-0")},
+        failures={"Platform Engineer 1": RuntimeError("resolution network failure")},
+    )
+    with pytest.raises(RuntimeError):
+        run_pipeline(app, FakeDiscover(jobs), FakeScorer(scorer_results), resolver)
+    with app.app_context():
+        connection = db.get_db()
+        marker = connection.execute(
+            "SELECT 1 FROM recommendation_days WHERE recommendation_date = ?", (DAY,)
+        ).fetchone()
+    assert marker is None
+
+
+def test_retry_after_fatal_failure_marks_day_complete(app):
+    jobs, scorer_results, resolver_results = _make_n_jobs(3)
+    failing = FakeResolver(
+        results={"Platform Engineer 0": ok_resolution("https://acme.com/careers/pe-0")},
+        failures={"Platform Engineer 1": RuntimeError("resolution network failure")},
+    )
+    with pytest.raises(RuntimeError):
+        run_pipeline(app, FakeDiscover(jobs), FakeScorer(scorer_results), failing)
+    recommendations = run_pipeline(
+        app,
+        FakeDiscover(jobs),
+        FakeScorer(scorer_results),
+        FakeResolver(resolver_results),
+    )
+    assert len(recommendations) == 3
+    with app.app_context():
+        connection = db.get_db()
+        marker = connection.execute(
+            "SELECT 1 FROM recommendation_days WHERE recommendation_date = ?", (DAY,)
+        ).fetchone()
+    assert marker is not None
+
+
+def test_completed_marker_with_rows_returns_pinned_without_work(app):
+    with app.app_context():
+        connection = db.get_db()
+        job_id = db.upsert_job(connection, make_job(source_job_id="seeded-1"))
+        insert_pinned_recommendation(connection, DAY, job_id, score=90)
+        connection.execute(
+            "INSERT INTO recommendation_days (recommendation_date, completed_at) "
+            "VALUES (?, datetime('now'))",
+            (DAY,),
+        )
+        connection.commit()
+    discover = FakeDiscover([make_job(source_job_id="seeded-1")])
+    scorer = FakeScorer({})
+    resolver = FakeResolver({})
+    recommendations = run_pipeline(app, discover, scorer, resolver)
+    assert len(recommendations) == 1
+    assert recommendations[0]["job_id"] == job_id
+    assert discover.calls == 0
+    assert scorer.calls == []
+    assert resolver.calls == []
+
+
+def test_prior_day_completion_does_not_suppress_today(app):
+    with app.app_context():
+        connection = db.get_db()
+        connection.execute(
+            "INSERT INTO recommendation_days (recommendation_date, completed_at) "
+            "VALUES (?, datetime('now'))",
+            (PRIOR_DAY,),
+        )
+        connection.commit()
+    scorer = FakeScorer({"Senior Product Manager": result(90)})
+    resolver = FakeResolver(
+        {"Senior Product Manager": ok_resolution("https://acme.com/careers/spm")}
+    )
+    recommendations = run_pipeline(app, FakeDiscover([make_job()]), scorer, resolver)
+    assert scorer.calls == ["Senior Product Manager"]
+    assert len(recommendations) == 1

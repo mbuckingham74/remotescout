@@ -2,36 +2,37 @@
 {% block title %}Recommendations - Remote Scout{% endblock %}
 {% block content %}
 <h2>Recommendations for {{ day }}</h2>
-{% if recommendations %}
-<table>
-  <thead>
-    <tr>
-      <th>Score</th>
-      <th>Company</th>
-      <th>Position</th>
-      <th>Fit</th>
-      <th>Apply</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for job in recommendations %}
-    <tr>
-      <td>{{ job["score"] }}</td>
-      <td>{{ job["employer"] }}</td>
-      <td>{{ job["title"] }}</td>
-      <td>{{ job["explanation"] }}</td>
-      <td>
-        {% if job["employer_url"] %}
-        <a href="{{ job['employer_url'] }}">Employer Site</a>
-        {% else %}
-        <span class="muted">Pending</span>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+{% if state == "error" %}
+<p class="empty-state">Recommendations couldn't be generated right now. Please try again later.</p>
+{% elif state == "empty" %}
+<p class="empty-state">No strong matches today.</p>
+{% elif state == "all_applied" %}
+<p class="empty-state">You've handled today's recommendations.</p>
 {% else %}
-<p class="empty-state">No recommendations for today yet.</p>
+<ul class="cards">
+  {% for job in recommendations %}
+  <li class="card">
+    <div class="card-head">
+      <div>
+        <h3>{{ job["title"] }}</h3>
+        <p class="muted">{{ job["employer"] }}{% if job["location"] %} &middot; {{ job["location"] }}{% endif %}</p>
+      </div>
+      <div class="score">{{ job["score"]|int }}</div>
+    </div>
+    {% if job["compensation"] %}<p class="muted">{{ job["compensation"] }}</p>{% endif %}
+    <p class="explanation">{{ job["explanation"] }}</p>
+    <div class="card-actions">
+      {% if job["employer_url"] %}
+      <a class="btn" href="{{ job['employer_url'] }}" target="_blank" rel="noopener">Apply on Employer Site</a>
+      {% else %}
+      <span class="muted">No employer posting available</span>
+      {% endif %}
+      <form method="post" action="{{ url_for('mark_applied', job_id=job['job_id']) }}">
+        <button type="submit" class="btn btn-secondary">Mark Applied</button>
+      </form>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
 {% endif %}
 {% endblock %}

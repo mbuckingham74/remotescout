@@ -11,6 +11,7 @@
       <th>Applied</th>
       <th>Status</th>
       <th>Notes</th>
+      <th>Posting</th>
     </tr>
   </thead>
   <tbody>
@@ -20,7 +21,12 @@
       <td>{{ app["title"] }}</td>
       <td>{{ app["applied_at"] }}</td>
       <td>{{ app["status"] }}</td>
-      <td>{{ app["notes"] }}</td>
+      <td>{{ app["notes"] or "" }}</td>
+      <td>
+        {% if app["employer_url"] %}
+        <a href="{{ app['employer_url'] }}" target="_blank" rel="noopener">Employer Posting</a>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>

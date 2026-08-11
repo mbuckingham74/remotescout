@@ -94,6 +94,8 @@ def build_daily_recommendations(
     pinned = db.get_recommendations(connection, day)
     if pinned:
         return list(pinned)
+    if db.is_recommendation_day_complete(connection, day):
+        return list(db.get_recommendations(connection, day))
 
     config = load_config()
     if discover is None:
@@ -161,12 +163,17 @@ def build_daily_recommendations(
         if len(accepted) >= RECOMMENDATION_LIMIT:
             break
 
-    for rank, (job_id, result) in enumerate(accepted, start=1):
-        connection.execute(
-            "INSERT INTO recommendations (date, rank, job_id, score, explanation) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (day, rank, job_id, result.score, result.fit_explanation),
-        )
-    connection.commit()
+    try:
+        for rank, (job_id, result) in enumerate(accepted, start=1):
+            connection.execute(
+                "INSERT INTO recommendations (date, rank, job_id, score, explanation) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (day, rank, job_id, result.score, result.fit_explanation),
+            )
+        db.mark_recommendation_day_complete(connection, day)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
 
     return list(db.get_recommendations(connection, day))
