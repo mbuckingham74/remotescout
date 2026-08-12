@@ -1,27 +1,25 @@
 #!/usr/bin/env bash
-# deploy.sh — Production deployment for Remote Scout.
+# deploy.sh — Deploy Remote Scout from the local Mac to the forkstech
+# production server (rsync + SSH + remote Docker Compose).
 #
-# Intended to be invoked manually on the Remote Scout host from any
-# working directory:
+# Usage (from the Remote Scout repository root):
 #
 #   ./deploy.sh
 #
 # Flow:
 #   resolve script/repo root (no arguments accepted)
-#   -> validate prerequisites / environment / repo state (clean working tree)
-#   -> git fetch + capture the exact target commit (origin/main)
-#   -> print target short SHA + subject
-#   -> Foxguard security gate scans that exact target commit (mandatory,
-#      no bypass; staged in a temporary directory, never the live tree)
-#   -> fast-forward the production checkout to the already-validated commit
-#   -> build and start the application container
-#   -> bounded startup readiness
-#   -> Docker image/build-cache pruning
-#   -> final /healthz check (required; last substantive gate; success is
-#      not printed before this)
+#   -> local validation (clean working tree on main, tools, baseline)
+#   -> print deployment target (exact local HEAD being deployed)
+#   -> FOXGUARD gate (local, mandatory; before any transfer)
+#   -> rsync exact local deployment payload to the server
+#   -> remote validation (.env, docker, compose, npm_network, db path)
+#   -> remote docker compose build/up
+#   -> remote bounded container readiness
+#   -> remote image/build-cache pruning
+#   -> FINAL remote /healthz check (required; success is not printed before)
 #
-# This script never touches cron, systemd timers, Nginx Proxy Manager,
-# DNS, Authelia, or the SQLite database contents.
+# This script never runs Git on the server, never touches cron, systemd
+# timers, Nginx Proxy Manager, Authelia, DNS, or the SQLite database.
 
 set -euo pipefail
 
@@ -29,18 +27,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 cd "$REPO_ROOT"
 
-SERVICE_NAME="remotescout-app"
-GIT_REMOTE="origin"
+SSH_USER="michael"
+SSH_HOST="100.120.233.4"
+SSH_TARGET="$SSH_USER@$SSH_HOST"
+REMOTE_DIR="${REMOTESCOUT_REMOTE_DIR:-/home/michael/apps/remotescout}"
 GIT_BRANCH="main"
-ENV_FILE="$REPO_ROOT/.env"
-CONTAINER_HEALTH_URL="http://127.0.0.1:8000/healthz"
-STARTUP_TIMEOUT_SECONDS="${REMOTESCOUT_STARTUP_TIMEOUT_SECONDS:-120}"
-STARTUP_POLL_SECONDS="${REMOTESCOUT_STARTUP_POLL_SECONDS:-5}"
-FINAL_HEALTH_ATTEMPTS="${REMOTESCOUT_FINAL_HEALTH_ATTEMPTS:-6}"
-FINAL_HEALTH_INTERVAL_SECONDS="${REMOTESCOUT_FINAL_HEALTH_INTERVAL_SECONDS:-5}"
-
-# shellcheck source=lib/deploy-validation.sh
-source "$REPO_ROOT/scripts/lib/deploy-validation.sh"
+SERVICE_NAME="remotescout-app"
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
 
 if [[ $# -gt 0 ]]; then
   echo "ERROR: deploy.sh takes no arguments." >&2
@@ -55,37 +48,16 @@ require_command() {
 }
 
 require_command git
-require_command docker
+require_command ssh
+require_command rsync
 require_command npx
 
-echo "=== Deploying Remote Scout ==="
-echo "Repo root: $REPO_ROOT"
+echo "=== Deploying Remote Scout to forkstech ==="
+echo "Repo root:  $REPO_ROOT"
+echo "Server:     $SSH_TARGET"
+echo "Remote dir: $REMOTE_DIR"
 
-# --- validate environment / inspect state ---
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "ERROR: Missing production environment file: $ENV_FILE" >&2
-  echo "Create it on this host with at least: ANTHROPIC_API_KEY=<key>" >&2
-  exit 1
-fi
-
-api_key="$(sed -n 's/^ANTHROPIC_API_KEY=//p' "$ENV_FILE" | head -n1 | tr -d '\r')"
-if [[ -z "$api_key" ]]; then
-  echo "ERROR: ANTHROPIC_API_KEY is missing or empty in $ENV_FILE." >&2
-  echo "Remote Scout cannot score recommendations without it." >&2
-  exit 1
-fi
-
-db_path="$(sed -n 's/^REMOTESCOUT_DATABASE_PATH=//p' "$ENV_FILE" | head -n1 | tr -d '\r')"
-if [[ -n "$db_path" ]] && ! is_db_path_persisted "$db_path"; then
-  echo "ERROR: REMOTESCOUT_DATABASE_PATH in $ENV_FILE is not persisted by the deployed volume: $db_path" >&2
-  echo "The container mounts ./instance at /app/instance; the database must live under /app/instance/." >&2
-  echo "Valid example: /app/instance/remotescout.db" >&2
-  echo "Invalid examples: /app/remotescout.db, /tmp/remotescout.db" >&2
-  echo "Unset the variable (container default: /app/instance/remotescout.db) or set a valid path." >&2
-  echo "The SQLite database is preserved via the ./instance volume and must never be recreated." >&2
-  exit 1
-fi
-
+# --- local repository state ---
 if [[ ! -d "$REPO_ROOT/.git" ]]; then
   echo "ERROR: $REPO_ROOT is not a git working tree." >&2
   exit 1
@@ -102,57 +74,108 @@ if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
   exit 1
 fi
 
-if ! docker network inspect npm_network >/dev/null 2>&1; then
-  echo "ERROR: Docker network 'npm_network' does not exist." >&2
-  echo "It is created by the host's Nginx Proxy Manager stack." >&2
-  exit 1
-fi
-
-# --- capture the exact target commit (fetch does not touch the working tree) ---
-echo "Fetching $GIT_REMOTE/$GIT_BRANCH..."
-git fetch "$GIT_REMOTE" "$GIT_BRANCH"
-
-TARGET_COMMIT="$(git rev-parse "$GIT_REMOTE/$GIT_BRANCH")"
+# --- exact deployment target (local clean HEAD; no git operations on the server) ---
+TARGET_COMMIT="$(git rev-parse HEAD)"
 TARGET_SHORT="$(git rev-parse --short "$TARGET_COMMIT")"
 TARGET_SUBJECT="$(git log -1 --pretty=%s "$TARGET_COMMIT")"
 echo "Deployment target: $TARGET_SHORT $TARGET_SUBJECT"
 
-if ! git cat-file -e "$TARGET_COMMIT:foxguard-baseline.json"; then
-  echo "ERROR: Target commit $TARGET_COMMIT does not contain foxguard-baseline.json." >&2
-  echo "Commit the baseline file to $GIT_BRANCH before deploying." >&2
+# --- Foxguard gate (local, mandatory; no bypass) ---
+if [[ ! -f "$REPO_ROOT/foxguard-baseline.json" ]]; then
+  echo "ERROR: Missing Foxguard baseline file: $REPO_ROOT/foxguard-baseline.json" >&2
+  echo "Run from this repo root: foxguard --write-baseline foxguard-baseline.json ." >&2
   exit 1
 fi
 
-# --- stage the exact target revision for Foxguard (never scan the live tree) ---
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-git archive "$TARGET_COMMIT" | tar -x -C "$TMP_DIR"
-
-# --- Foxguard gate (mandatory; no bypass) ---
-echo "Running Foxguard security scan against $TARGET_COMMIT..."
-if ! (cd "$TMP_DIR" && npx foxguard --baseline foxguard-baseline.json .); then
-  echo "Foxguard gate FAILED for $TARGET_COMMIT. Deployment aborted before any changes; production checkout unchanged." >&2
+echo "Running Foxguard security scan..."
+if ! npx foxguard --baseline foxguard-baseline.json .; then
+  echo "Foxguard gate FAILED. Deployment aborted before any transfer." >&2
   exit 1
 fi
-echo "Foxguard gate PASSED for $TARGET_COMMIT"
+echo "Foxguard gate PASSED for $TARGET_SHORT"
 
-# --- advance the production checkout to the validated commit (ff-only) ---
-echo "Advancing production checkout to $TARGET_COMMIT (fast-forward only)..."
-git merge --ff-only "$TARGET_COMMIT"
+# --- transfer the exact local deployment payload ---
+echo "Ensuring remote directory exists..."
+ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "mkdir -p '$REMOTE_DIR'"
 
-if [[ "$(git rev-parse HEAD)" != "$TARGET_COMMIT" ]]; then
-  echo "ERROR: Production checkout is not at the validated commit $TARGET_COMMIT." >&2
+echo "Syncing deployment payload to $SSH_TARGET:$REMOTE_DIR ..."
+rsync -avz --delete \
+  -e "ssh ${SSH_OPTS[*]}" \
+  --exclude .git \
+  --exclude .env \
+  --exclude .venv \
+  --exclude __pycache__ \
+  --exclude '*.pyc' \
+  --exclude .pytest_cache \
+  --exclude instance \
+  --exclude '*.db' \
+  --exclude '*.db-shm' \
+  --exclude '*.db-wal' \
+  --exclude .DS_Store \
+  --exclude deploy.sh \
+  --exclude tests \
+  --exclude scripts/smoke_recommendations.py \
+  --exclude scripts/test-deploy-validation.sh \
+  "$REPO_ROOT/" "$SSH_TARGET:$REMOTE_DIR/"
+
+# --- remote deployment (single SSH session; server state lives on the server) ---
+echo "Running remote deployment..."
+ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "export REMOTESCOUT_REMOTE_DIR='$REMOTE_DIR'; bash -s" <<'REMOTE_EOF'
+set -euo pipefail
+
+SERVICE_NAME="remotescout-app"
+REMOTE_DIR="${REMOTESCOUT_REMOTE_DIR:-/home/michael/apps/remotescout}"
+HEALTH_URL="http://127.0.0.1:8000/healthz"
+STARTUP_TIMEOUT_SECONDS=120
+STARTUP_POLL_SECONDS=5
+FINAL_HEALTH_ATTEMPTS=6
+FINAL_HEALTH_INTERVAL_SECONDS=5
+
+cd "$REMOTE_DIR"
+
+if [[ ! -f "$REMOTE_DIR/.env" ]]; then
+  echo "ERROR: Missing $REMOTE_DIR/.env on the server." >&2
+  echo "The production .env is server-owned and is never transferred." >&2
   exit 1
 fi
 
-# --- deployment mutations ---
+api_key="$(sed -n 's/^ANTHROPIC_API_KEY=//p' "$REMOTE_DIR/.env" | head -n1 | tr -d '\r')"
+if [[ -z "$api_key" ]]; then
+  echo "ERROR: ANTHROPIC_API_KEY is missing or empty in $REMOTE_DIR/.env" >&2
+  exit 1
+fi
+
+source "$REMOTE_DIR/scripts/lib/deploy-validation.sh"
+db_path="$(sed -n 's/^REMOTESCOUT_DATABASE_PATH=//p' "$REMOTE_DIR/.env" | head -n1 | tr -d '\r')"
+if [[ -n "$db_path" ]] && ! is_db_path_persisted "$db_path"; then
+  echo "ERROR: REMOTESCOUT_DATABASE_PATH in $REMOTE_DIR/.env is not persisted by the deployed volume: $db_path" >&2
+  echo "The container mounts ./instance at /app/instance; the database must live under /app/instance/." >&2
+  echo "Unset the variable (container default: /app/instance/remotescout.db) or set a valid path." >&2
+  exit 1
+fi
+
+command -v docker >/dev/null 2>&1 || {
+  echo "ERROR: docker is not available on the server." >&2
+  exit 1
+}
+docker compose version >/dev/null 2>&1 || {
+  echo "ERROR: docker compose is not available on the server." >&2
+  exit 1
+}
+docker network inspect npm_network >/dev/null 2>&1 || {
+  echo "ERROR: Docker network 'npm_network' does not exist on the server." >&2
+  echo "It is created by the host's Nginx Proxy Manager stack." >&2
+  exit 1
+}
+
+mkdir -p "$REMOTE_DIR/instance"
+
 echo "Building updated image..."
 docker compose build --pull "$SERVICE_NAME"
 
 echo "Starting updated container..."
 docker compose up -d --no-deps "$SERVICE_NAME"
 
-# --- bounded startup readiness ---
 container_id="$(docker compose ps -q "$SERVICE_NAME")"
 if [[ -z "$container_id" ]]; then
   echo "ERROR: Could not determine container ID for $SERVICE_NAME." >&2
@@ -185,33 +208,30 @@ while true; do
   esac
 done
 
-# --- cleanup (host convention; before the final health gate) ---
 docker image prune -f >/dev/null 2>&1 || true
 docker builder prune -af --filter 'until=24h' >/dev/null 2>&1 || true
 
-# --- final /healthz check (required; last substantive gate) ---
 echo "Running final /healthz check..."
-last_status=0
+health_ok=0
 for attempt in $(seq 1 "$FINAL_HEALTH_ATTEMPTS"); do
-  if docker exec "$container_id" python -c "import urllib.request; urllib.request.urlopen('$CONTAINER_HEALTH_URL', timeout=10)" >/dev/null 2>&1; then
-    echo "Health check passed: $CONTAINER_HEALTH_URL"
-    last_status=0
+  if docker exec "$container_id" python -c "import urllib.request; urllib.request.urlopen('$HEALTH_URL', timeout=10)" >/dev/null 2>&1; then
+    echo "Health check passed: $HEALTH_URL"
+    health_ok=1
     break
   fi
-  echo "Health check attempt $attempt/$FINAL_HEALTH_ATTEMPTS failed; retrying in ${FINAL_HEALTH_INTERVAL_SECONDS}s..."
+  echo "Health attempt $attempt/$FINAL_HEALTH_ATTEMPTS failed; retrying in ${FINAL_HEALTH_INTERVAL_SECONDS}s..."
   sleep "$FINAL_HEALTH_INTERVAL_SECONDS"
-  last_status=1
 done
 
-if [[ "$last_status" -ne 0 ]]; then
+if [[ "$health_ok" -ne 1 ]]; then
   echo "ERROR: /healthz did not return 200 after deploy." >&2
   docker compose logs --tail=100 "$SERVICE_NAME" >&2 || true
   exit 1
 fi
+REMOTE_EOF
 
 echo ""
 echo "=== Deployment complete ==="
 echo "Service: $SERVICE_NAME"
-echo "Commit:  $TARGET_SHORT $TARGET_SUBJECT — scanned by Foxguard and deployed"
-echo "Health:  $CONTAINER_HEALTH_URL returned 200"
-docker compose ps || true
+echo "Commit:  $TARGET_SHORT $TARGET_SUBJECT — scanned by Foxguard locally and deployed"
+echo "Health:  remote /healthz returned 200"
