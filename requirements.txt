@@ -1,4 +1,5 @@
 flask>=3.0
+gunicorn>=21.0
 pypdf>=4.0
 scrapling>=0.4
 curl-cffi>=0.7

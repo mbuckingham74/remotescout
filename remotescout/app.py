@@ -75,6 +75,10 @@ def create_app(config_overrides=None):
         db.mark_job_applied(connection, job_id, today)
         return redirect(url_for("recommendations"))
 
+    @app.route("/healthz")
+    def healthz():
+        return "ok"
+
     @app.route("/applications/<int:application_id>/status", methods=["POST"])
     def update_status(application_id):
         new_status = request.form.get("status", "")

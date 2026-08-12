@@ -68,6 +68,37 @@ def test_tracker_page_renders(client):
     assert "Application Tracker" in response.get_data(as_text=True)
 
 
+def test_healthz_returns_200(client):
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+
+def test_healthz_does_not_invoke_recommendation_engine(client, monkeypatch):
+    def explode(*args, **kwargs):
+        raise AssertionError("healthz must not invoke the recommendation engine")
+
+    monkeypatch.setattr("remotescout.engine.build_daily_recommendations", explode)
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+
+def test_healthz_does_not_require_anthropic_configuration(client, monkeypatch):
+    monkeypatch.setattr("remotescout.config.load_config", lambda: {"ANTHROPIC_API_KEY": ""})
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+
+def test_healthz_does_no_external_network_work(client, monkeypatch):
+    def explode(*args, **kwargs):
+        raise AssertionError("healthz must not open network connections")
+
+    monkeypatch.setattr("urllib.request.urlopen", explode)
+    monkeypatch.setattr("remotescout.discovery.weworkremotely.fetch_jobs", explode)
+    monkeypatch.setattr("remotescout.resolution.resolve_job", explode)
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+
 def test_application_and_history_event_roundtrip(app):
     with app.app_context():
         connection = db.get_db()
