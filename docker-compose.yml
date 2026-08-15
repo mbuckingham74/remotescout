@@ -7,7 +7,7 @@ services:
     environment:
       - REMOTESCOUT_DATABASE_PATH=/app/instance/remotescout.db
     volumes:
-      - ./instance:/app/instance
+      - /home/michael/state/remotescout:/app/instance
     networks:
       - npm_network
     healthcheck:

@@ -30,7 +30,8 @@ cd "$REPO_ROOT"
 SSH_USER="michael"
 SSH_HOST="100.120.233.4"
 SSH_TARGET="$SSH_USER@$SSH_HOST"
-REMOTE_DIR="${REMOTESCOUT_REMOTE_DIR:-/home/michael/apps/remotescout}"
+REMOTE_DIR="${REMOTESCOUT_REMOTE_DIR:-/home/michael/deployments/remotescout}"
+STATE_DIR="${REMOTESCOUT_STATE_DIR:-/home/michael/state/remotescout}"
 GIT_BRANCH="main"
 SERVICE_NAME="remotescout-app"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
@@ -103,6 +104,7 @@ rsync -avz --delete \
   -e "ssh ${SSH_OPTS[*]}" \
   --exclude .git \
   --exclude .env \
+  --exclude .deployment.json \
   --exclude .venv \
   --exclude __pycache__ \
   --exclude '*.pyc' \
@@ -120,11 +122,12 @@ rsync -avz --delete \
 
 # --- remote deployment (single SSH session; server state lives on the server) ---
 echo "Running remote deployment..."
-ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "export REMOTESCOUT_REMOTE_DIR='$REMOTE_DIR'; bash -s" <<'REMOTE_EOF'
+ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "export REMOTESCOUT_REMOTE_DIR='$REMOTE_DIR' REMOTESCOUT_STATE_DIR='$STATE_DIR'; bash -s" <<'REMOTE_EOF'
 set -euo pipefail
 
 SERVICE_NAME="remotescout-app"
-REMOTE_DIR="${REMOTESCOUT_REMOTE_DIR:-/home/michael/apps/remotescout}"
+REMOTE_DIR="${REMOTESCOUT_REMOTE_DIR:-/home/michael/deployments/remotescout}"
+STATE_DIR="${REMOTESCOUT_STATE_DIR:-/home/michael/state/remotescout}"
 HEALTH_URL="http://127.0.0.1:8000/healthz"
 STARTUP_TIMEOUT_SECONDS=120
 STARTUP_POLL_SECONDS=5
@@ -149,7 +152,7 @@ source "$REMOTE_DIR/scripts/lib/deploy-validation.sh"
 db_path="$(sed -n 's/^REMOTESCOUT_DATABASE_PATH=//p' "$REMOTE_DIR/.env" | head -n1 | tr -d '\r')"
 if [[ -n "$db_path" ]] && ! is_db_path_persisted "$db_path"; then
   echo "ERROR: REMOTESCOUT_DATABASE_PATH in $REMOTE_DIR/.env is not persisted by the deployed volume: $db_path" >&2
-  echo "The container mounts ./instance at /app/instance; the database must live under /app/instance/." >&2
+  echo "The container mounts /home/michael/state/remotescout at /app/instance; the database must live under /app/instance/." >&2
   echo "Unset the variable (container default: /app/instance/remotescout.db) or set a valid path." >&2
   exit 1
 fi
@@ -168,7 +171,7 @@ docker network inspect npm_network >/dev/null 2>&1 || {
   exit 1
 }
 
-mkdir -p "$REMOTE_DIR/instance"
+mkdir -p "$STATE_DIR"
 
 echo "Building updated image..."
 docker compose build --pull "$SERVICE_NAME"
