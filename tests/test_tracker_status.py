@@ -340,9 +340,19 @@ class TestHistory:
             job_id = create_job(connection)
             seed_recommendations(connection, [job_id])
         client.post(f"/recommendations/{job_id}/applied")
+        with app.app_context():
+            connection = db.get_db()
+            application_id = connection.execute(
+                "SELECT id FROM applications WHERE job_id = ?", (job_id,)
+            ).fetchone()["id"]
+            event_date = events(connection, application_id)[0]["event_date"]
+            expected = (
+                f"Applied &mdash; "
+                f"{datetime.date.fromisoformat(event_date).strftime('%b %d, %Y')}"
+            )
         page = html(client.get("/tracker"))
         assert "History" in page
-        assert "Applied &mdash; Aug 11, 2026" in page
+        assert expected in page
 
     def test_tracker_displays_subsequent_status_events(self, app, client):
         with app.app_context():
