@@ -86,8 +86,16 @@ def build_daily_recommendations(
     resolve=None,
     resume_text=None,
     threshold=None,
+    source_id=None,
 ):
-    """Build and persist the day's up-to-three best verified recommendations."""
+    """Build and persist the day's up-to-three best verified recommendations.
+
+    Every genuine attempt creates a durable :class:`pipeline_runs` record,
+    one :class:`pipeline_source_attempts` record per source invocation,
+    and one :class:`pipeline_run_jobs` record per discovered job. The
+    pipeline_runs row is committed before any expensive work begins so a
+    crash leaves recoverable evidence.
+    """
     day = recommendation_date or business_today().isoformat()
 
     pinned = db.get_recommendations(connection, day)
@@ -99,6 +107,8 @@ def build_daily_recommendations(
     config = load_config()
     if discover is None:
         discover = weworkremotely.fetch_jobs
+    if source_id is None:
+        source_id = weworkremotely.SOURCE
     if resume_text is None:
         resume_text = resume_module.extract_resume_text(config["RESUME_PATH"])
     if score is None:
@@ -107,72 +117,188 @@ def build_daily_recommendations(
         resolve = resolution.resolve_job
     if threshold is None:
         threshold = config["RECOMMENDATION_THRESHOLD"]
+    scoring_model = config["ANTHROPIC_MODEL"]
 
-    candidates = []
-    for job in discover():
-        job_id = db.upsert_job(connection, job)
-        candidates.append((job_id, job))
+    run_id = db.create_pipeline_run(connection, day, threshold, scoring_model)
     connection.commit()
 
-    evidence = _AppliedEvidence(db.get_applied_jobs(connection))
-
-    plausible = []
-    for job_id, job in candidates:
-        if not filtering.filter_job(job).passed:
-            continue
-        if _applied_before_scoring(evidence, job_id, job):
-            continue
-        plausible.append((job_id, job))
-
-    scored = []
-    for job_id, job in plausible:
-        try:
-            result = score(job, resume_text)
-        except scoring.MissingApiKeyError:
-            raise
-        except scoring.ScoringError:
-            continue
-        db.set_job_score(connection, job_id, result.score, result.fit_explanation)
-        connection.commit()
-        if not scoring.meets_threshold(result, threshold):
-            continue
-        scored.append((job_id, job, result))
-
-    ranked = sorted(scored, key=lambda item: (-item[2].score, item[0]))
-
-    accepted = []
-    accepted_urls = set()
-    accepted_requisitions = set()
-    for job_id, job, result in ranked:
-        resolved = resolve(job)
-        if not resolved.resolved:
-            continue
-        db.set_resolution(
-            connection, job_id, resolved.employer_url, resolved.requisition_id
-        )
-        connection.commit()
-        if _applied_after_resolution(evidence, resolved, job.employer):
-            continue
-        if _duplicate_canonical(
-            accepted_urls, accepted_requisitions, resolved, job.employer
-        ):
-            continue
-        accepted.append((job_id, result))
-        _remember_canonical(accepted_urls, accepted_requisitions, resolved, job.employer)
-        if len(accepted) >= RECOMMENDATION_LIMIT:
-            break
+    source_attempt_id = db.create_pipeline_source_attempt(
+        connection, run_id, source_id
+    )
+    connection.commit()
 
     try:
-        for rank, (job_id, result) in enumerate(accepted, start=1):
-            connection.execute(
-                "INSERT INTO recommendations (date, rank, job_id, score, explanation) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (day, rank, job_id, result.score, result.fit_explanation),
+        try:
+            discovered_jobs = list(discover())
+        except Exception as error:
+            db.finish_pipeline_source_attempt_failed(
+                connection,
+                source_attempt_id,
+                type(error).__name__,
+                str(error),
             )
-        db.mark_recommendation_day_complete(connection, day)
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
+            connection.commit()
+            raise
 
-    return list(db.get_recommendations(connection, day))
+        db.finish_pipeline_source_attempt_succeeded(
+            connection, source_attempt_id, len(discovered_jobs)
+        )
+        connection.commit()
+
+        candidates = []
+        for job in discovered_jobs:
+            job_id = db.upsert_job(connection, job)
+            candidates.append((job_id, job))
+        connection.commit()
+
+        evidence = _AppliedEvidence(db.get_applied_jobs(connection))
+
+        plausible = []
+        for job_id, job in candidates:
+            filter_result = filtering.filter_job(job)
+            db.record_pipeline_run_job(
+                connection,
+                run_id,
+                job_id,
+                source_id,
+                filter_result.passed,
+                filter_result.reasons,
+            )
+            if not filter_result.passed:
+                continue
+            if _applied_before_scoring(evidence, job_id, job):
+                db.mark_pipeline_run_job_suppressed_pre_score(
+                    connection, run_id, job_id
+                )
+                continue
+            plausible.append((job_id, job))
+        connection.commit()
+
+        scored = []
+        for job_id, job in plausible:
+            try:
+                result = score(job, resume_text)
+            except scoring.MissingApiKeyError as error:
+                db.record_pipeline_run_job_scoring_error(
+                    connection,
+                    run_id,
+                    job_id,
+                    type(error).__name__,
+                    str(error),
+                )
+                connection.commit()
+                raise
+            except scoring.ScoringError as error:
+                db.record_pipeline_run_job_scoring_error(
+                    connection,
+                    run_id,
+                    job_id,
+                    type(error).__name__,
+                    str(error),
+                )
+                connection.commit()
+                continue
+            except Exception as error:
+                db.record_pipeline_run_job_scoring_error(
+                    connection,
+                    run_id,
+                    job_id,
+                    type(error).__name__,
+                    str(error),
+                )
+                connection.commit()
+                raise
+            db.set_job_score(connection, job_id, result.score, result.fit_explanation)
+            db.record_pipeline_run_job_scoring_succeeded(
+                connection,
+                run_id,
+                job_id,
+                result.score,
+                result.fit_explanation,
+                result.strengths,
+                result.gaps,
+                scoring.meets_threshold(result, threshold),
+            )
+            connection.commit()
+            if not scoring.meets_threshold(result, threshold):
+                continue
+            scored.append((job_id, job, result))
+
+        ranked = sorted(scored, key=lambda item: (-item[2].score, item[0]))
+
+        accepted = []
+        accepted_urls = set()
+        accepted_requisitions = set()
+        for job_id, job, result in ranked:
+            try:
+                resolved = resolve(job)
+            except Exception as error:
+                db.mark_pipeline_run_job_resolution_attempted(
+                    connection, run_id, job_id
+                )
+                connection.commit()
+                raise
+            db.record_pipeline_run_job_resolution(
+                connection,
+                run_id,
+                job_id,
+                resolved.resolved,
+                resolved.employer_url,
+                resolved.requisition_id,
+                resolved.method,
+            )
+            if not resolved.resolved:
+                connection.commit()
+                continue
+            db.set_resolution(
+                connection, job_id, resolved.employer_url, resolved.requisition_id
+            )
+            connection.commit()
+            if _applied_after_resolution(evidence, resolved, job.employer):
+                db.mark_pipeline_run_job_suppressed_post_resolution(
+                    connection, run_id, job_id
+                )
+                continue
+            if _duplicate_canonical(
+                accepted_urls, accepted_requisitions, resolved, job.employer
+            ):
+                db.mark_pipeline_run_job_suppressed_canonical_duplicate(
+                    connection, run_id, job_id
+                )
+                continue
+            accepted.append((job_id, result))
+            _remember_canonical(accepted_urls, accepted_requisitions, resolved, job.employer)
+            if len(accepted) >= RECOMMENDATION_LIMIT:
+                break
+        connection.commit()
+
+        try:
+            for rank, (job_id, result) in enumerate(accepted, start=1):
+                connection.execute(
+                    "INSERT INTO recommendations (date, rank, job_id, score, explanation) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (day, rank, job_id, result.score, result.fit_explanation),
+                )
+                db.set_pipeline_run_job_accepted_rank(
+                    connection, run_id, job_id, rank
+                )
+            db.mark_recommendation_day_complete(connection, day)
+            db.finish_pipeline_run_succeeded(connection, run_id)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
+        return list(db.get_recommendations(connection, day))
+    except Exception as error:
+        try:
+            db.finish_pipeline_run_failed(
+                connection,
+                run_id,
+                type(error).__name__,
+                str(error),
+            )
+            connection.commit()
+        except Exception:
+            pass
+        raise

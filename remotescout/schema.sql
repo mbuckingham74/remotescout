@@ -60,3 +60,62 @@ CREATE TABLE IF NOT EXISTS application_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_application_events_application ON application_events (application_id);
+
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recommendation_date TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT,
+    recommendation_threshold REAL,
+    scoring_model TEXT,
+    error_type TEXT,
+    error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_date ON pipeline_runs (recommendation_date);
+
+CREATE TABLE IF NOT EXISTS pipeline_source_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES pipeline_runs (id),
+    source TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT,
+    discovered_count INTEGER,
+    error_type TEXT,
+    error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_source_attempts_run ON pipeline_source_attempts (run_id);
+
+CREATE TABLE IF NOT EXISTS pipeline_run_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES pipeline_runs (id),
+    job_id INTEGER NOT NULL REFERENCES jobs (id),
+    source TEXT NOT NULL,
+    filter_passed INTEGER NOT NULL,
+    filter_reasons TEXT,
+    suppressed_pre_score INTEGER NOT NULL DEFAULT 0,
+    scoring_attempted INTEGER NOT NULL DEFAULT 0,
+    scoring_succeeded INTEGER NOT NULL DEFAULT 0,
+    score INTEGER,
+    fit_explanation TEXT,
+    strengths TEXT,
+    gaps TEXT,
+    meets_threshold INTEGER NOT NULL DEFAULT 0,
+    resolution_attempted INTEGER NOT NULL DEFAULT 0,
+    resolution_succeeded INTEGER NOT NULL DEFAULT 0,
+    resolution_method TEXT,
+    employer_url TEXT,
+    requisition_id TEXT,
+    suppressed_post_resolution INTEGER NOT NULL DEFAULT 0,
+    suppressed_canonical_duplicate INTEGER NOT NULL DEFAULT 0,
+    accepted_rank INTEGER,
+    scoring_error_type TEXT,
+    scoring_error_message TEXT,
+    UNIQUE (run_id, job_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_run_jobs_run ON pipeline_run_jobs (run_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_run_jobs_job ON pipeline_run_jobs (job_id);

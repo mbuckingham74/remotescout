@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -276,3 +277,233 @@ def update_application_status(connection, application_id, new_status, event_date
     except Exception:
         connection.rollback()
         raise
+
+
+ERROR_MESSAGE_MAX_LENGTH = 500
+
+
+def _bounded_error_text(text, limit=ERROR_MESSAGE_MAX_LENGTH):
+    if text is None:
+        return None
+    value = str(text)
+    if len(value) <= limit:
+        return value
+    return value[:limit]
+
+
+def _json_list(value):
+    if value is None:
+        return None
+    return json.dumps(list(value))
+
+
+def create_pipeline_run(connection, recommendation_date, threshold, scoring_model):
+    cursor = connection.execute(
+        "INSERT INTO pipeline_runs "
+        "(recommendation_date, status, recommendation_threshold, scoring_model) "
+        "VALUES (?, 'running', ?, ?)",
+        (recommendation_date, threshold, scoring_model),
+    )
+    return cursor.lastrowid
+
+
+def finish_pipeline_run_succeeded(connection, run_id):
+    connection.execute(
+        "UPDATE pipeline_runs "
+        "SET status = 'succeeded', finished_at = datetime('now') "
+        "WHERE id = ?",
+        (run_id,),
+    )
+
+
+def finish_pipeline_run_failed(connection, run_id, error_type, error_message):
+    connection.execute(
+        "UPDATE pipeline_runs "
+        "SET status = 'failed', finished_at = datetime('now'), "
+        "error_type = ?, error_message = ? "
+        "WHERE id = ?",
+        (_bounded_error_text(error_type), _bounded_error_text(error_message), run_id),
+    )
+
+
+def get_pipeline_run(connection, run_id):
+    return connection.execute(
+        "SELECT id, recommendation_date, status, started_at, finished_at, "
+        "recommendation_threshold, scoring_model, error_type, error_message "
+        "FROM pipeline_runs WHERE id = ?",
+        (run_id,),
+    ).fetchone()
+
+
+def create_pipeline_source_attempt(connection, run_id, source):
+    cursor = connection.execute(
+        "INSERT INTO pipeline_source_attempts (run_id, source, status) "
+        "VALUES (?, ?, 'running')",
+        (run_id, source),
+    )
+    return cursor.lastrowid
+
+
+def finish_pipeline_source_attempt_succeeded(connection, attempt_id, discovered_count):
+    connection.execute(
+        "UPDATE pipeline_source_attempts "
+        "SET status = 'succeeded', finished_at = datetime('now'), discovered_count = ? "
+        "WHERE id = ?",
+        (discovered_count, attempt_id),
+    )
+
+
+def finish_pipeline_source_attempt_failed(connection, attempt_id, error_type, error_message):
+    connection.execute(
+        "UPDATE pipeline_source_attempts "
+        "SET status = 'failed', finished_at = datetime('now'), "
+        "error_type = ?, error_message = ? "
+        "WHERE id = ?",
+        (
+            _bounded_error_text(error_type),
+            _bounded_error_text(error_message),
+            attempt_id,
+        ),
+    )
+
+
+def get_pipeline_source_attempts(connection, run_id):
+    return connection.execute(
+        "SELECT id, run_id, source, status, started_at, finished_at, "
+        "discovered_count, error_type, error_message "
+        "FROM pipeline_source_attempts WHERE run_id = ? ORDER BY id",
+        (run_id,),
+    ).fetchall()
+
+
+def record_pipeline_run_job(connection, run_id, job_id, source, filter_passed, filter_reasons):
+    connection.execute(
+        "INSERT INTO pipeline_run_jobs "
+        "(run_id, job_id, source, filter_passed, filter_reasons) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (
+            run_id,
+            job_id,
+            source,
+            1 if filter_passed else 0,
+            _json_list(filter_reasons) if filter_reasons else None,
+        ),
+    )
+
+
+def mark_pipeline_run_job_suppressed_pre_score(connection, run_id, job_id):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET suppressed_pre_score = 1 "
+        "WHERE run_id = ? AND job_id = ?",
+        (run_id, job_id),
+    )
+
+
+def record_pipeline_run_job_scoring_succeeded(
+    connection, run_id, job_id, score, fit_explanation, strengths, gaps, meets_threshold
+):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET "
+        "scoring_attempted = 1, scoring_succeeded = 1, "
+        "score = ?, fit_explanation = ?, strengths = ?, gaps = ?, "
+        "meets_threshold = ? "
+        "WHERE run_id = ? AND job_id = ?",
+        (
+            score,
+            fit_explanation,
+            _json_list(strengths),
+            _json_list(gaps),
+            1 if meets_threshold else 0,
+            run_id,
+            job_id,
+        ),
+    )
+
+
+def record_pipeline_run_job_scoring_error(connection, run_id, job_id, error_type, error_message):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET "
+        "scoring_attempted = 1, scoring_succeeded = 0, "
+        "scoring_error_type = ?, scoring_error_message = ? "
+        "WHERE run_id = ? AND job_id = ?",
+        (
+            _bounded_error_text(error_type),
+            _bounded_error_text(error_message),
+            run_id,
+            job_id,
+        ),
+    )
+
+
+def record_pipeline_run_job_resolution(
+    connection, run_id, job_id, resolved, employer_url, requisition_id, method
+):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET "
+        "resolution_attempted = 1, resolution_succeeded = ?, "
+        "resolution_method = ?, employer_url = ?, requisition_id = ? "
+        "WHERE run_id = ? AND job_id = ?",
+        (
+            1 if resolved else 0,
+            method,
+            employer_url,
+            requisition_id,
+            run_id,
+            job_id,
+        ),
+    )
+
+
+def mark_pipeline_run_job_resolution_attempted(connection, run_id, job_id):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET resolution_attempted = 1 "
+        "WHERE run_id = ? AND job_id = ?",
+        (run_id, job_id),
+    )
+
+
+def mark_pipeline_run_job_suppressed_post_resolution(connection, run_id, job_id):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET suppressed_post_resolution = 1 "
+        "WHERE run_id = ? AND job_id = ?",
+        (run_id, job_id),
+    )
+
+
+def mark_pipeline_run_job_suppressed_canonical_duplicate(connection, run_id, job_id):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET suppressed_canonical_duplicate = 1 "
+        "WHERE run_id = ? AND job_id = ?",
+        (run_id, job_id),
+    )
+
+
+def set_pipeline_run_job_accepted_rank(connection, run_id, job_id, rank):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET accepted_rank = ? "
+        "WHERE run_id = ? AND job_id = ?",
+        (rank, run_id, job_id),
+    )
+
+
+def get_pipeline_run_jobs(connection, run_id):
+    return connection.execute(
+        "SELECT id, run_id, job_id, source, filter_passed, filter_reasons, "
+        "suppressed_pre_score, scoring_attempted, scoring_succeeded, "
+        "score, fit_explanation, strengths, gaps, meets_threshold, "
+        "resolution_attempted, resolution_succeeded, resolution_method, "
+        "employer_url, requisition_id, suppressed_post_resolution, "
+        "suppressed_canonical_duplicate, accepted_rank, "
+        "scoring_error_type, scoring_error_message "
+        "FROM pipeline_run_jobs WHERE run_id = ? ORDER BY id",
+        (run_id,),
+    ).fetchall()
+
+
+def get_pipeline_runs_for_date(connection, recommendation_date):
+    return connection.execute(
+        "SELECT id, recommendation_date, status, started_at, finished_at, "
+        "recommendation_threshold, scoring_model, error_type, error_message "
+        "FROM pipeline_runs WHERE recommendation_date = ? ORDER BY id",
+        (recommendation_date,),
+    ).fetchall()
