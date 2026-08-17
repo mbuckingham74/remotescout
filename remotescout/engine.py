@@ -1,7 +1,6 @@
-import datetime
-
 from remotescout import db, filtering, resolution, scoring
 from remotescout import resume as resume_module
+from remotescout.business_time import business_today
 from remotescout.config import load_config
 from remotescout.discovery import weworkremotely
 
@@ -89,7 +88,7 @@ def build_daily_recommendations(
     threshold=None,
 ):
     """Build and persist the day's up-to-three best verified recommendations."""
-    day = recommendation_date or datetime.date.today().isoformat()
+    day = recommendation_date or business_today().isoformat()
 
     pinned = db.get_recommendations(connection, day)
     if pinned:

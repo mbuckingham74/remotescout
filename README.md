@@ -20,6 +20,7 @@ Remote Scout is a personal job-recommendation and application-tracking tool for 
 - [How it works](#how-it-works)
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
+- [Date semantics](#date-semantics)
 - [Daily recommendations via cron](#daily-recommendations-via-cron)
 - [Application tracker](#application-tracker)
 - [Database](#database)
@@ -110,6 +111,14 @@ All configuration lives in a `.env` file (or the environment) and is shared by t
 | `REMOTESCOUT_DATABASE_PATH` | `instance/remotescout.db` | SQLite database location |
 | `REMOTESCOUT_RESUME_PATH` | `docs/Michael-Buckingham-Resume-Infrastructure-Delivery-Director.pdf` | Résumé used for scoring |
 | `REMOTESCOUT_RECOMMENDATION_THRESHOLD` | `70` | Minimum score for a recommendation |
+
+## Date semantics
+
+Remote Scout is operated in Washington State. User-facing business dates — recommendation day, application date, application status-event date — use **America/Los_Angeles**, independent of the host's clock. A visit during Pacific evening never advances to "tomorrow" merely because UTC has crossed midnight.
+
+Technical timestamps (`created_at`, `last_seen_at`, `updated_at`, `completed_at`) remain UTC.
+
+The canonical helper is `remotescout.business_time.business_today`.
 
 ## Daily recommendations via cron
 

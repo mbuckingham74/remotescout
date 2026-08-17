@@ -11,6 +11,7 @@ from flask import (
 )
 
 from remotescout import db
+from remotescout.business_time import business_today
 from remotescout.config import load_config
 
 
@@ -34,7 +35,7 @@ def create_app(config_overrides=None):
 
     @app.route("/")
     def recommendations():
-        today = datetime.date.today().isoformat()
+        today = business_today().isoformat()
         connection = db.get_db()
         pinned = db.get_recommendations(connection, today)
         if not db.is_recommendation_day_complete(connection, today):
@@ -61,7 +62,7 @@ def create_app(config_overrides=None):
 
     @app.route("/recommendations/<int:job_id>/applied", methods=["POST"])
     def mark_applied(job_id):
-        today = datetime.date.today().isoformat()
+        today = business_today().isoformat()
         connection = db.get_db()
         recommended = {row["job_id"] for row in db.get_recommendations(connection, today)}
         if job_id not in recommended:
@@ -82,7 +83,7 @@ def create_app(config_overrides=None):
             db.get_db(),
             application_id,
             new_status,
-            datetime.date.today().isoformat(),
+            business_today().isoformat(),
         )
         if result == "not_found":
             abort(404)

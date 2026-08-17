@@ -4,8 +4,9 @@ import pytest
 
 from remotescout import db
 from remotescout.app import create_app
+from remotescout.business_time import business_today
 
-DAY = datetime.date.today().isoformat()
+DAY = business_today().isoformat()
 
 
 def create_job(connection, **overrides):

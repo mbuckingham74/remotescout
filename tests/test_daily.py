@@ -1,12 +1,11 @@
-import datetime
-
 import pytest
 
 from remotescout import daily, db
 from remotescout.app import create_app
+from remotescout.business_time import business_today
 from remotescout.scoring import MissingApiKeyError
 
-DAY = datetime.date.today().isoformat()
+DAY = business_today().isoformat()
 
 
 @pytest.fixture

@@ -8,10 +8,10 @@ Builds today's 0-3 recommendations, persists the recommendation-day
 completion marker, and exits. Scheduling is owned by the host operating
 system; this module only exposes the command.
 """
-import datetime
 import sys
 
 from remotescout import db, engine
+from remotescout.business_time import business_today
 from remotescout.config import load_config
 
 
@@ -22,7 +22,7 @@ def run_daily(build=None):
     successful no-op that returns the existing pinned recommendations
     without rediscovery, rescoring, or re-resolution.
     """
-    day = datetime.date.today().isoformat()
+    day = business_today().isoformat()
     config = load_config()
     if build is None:
         build = engine.build_daily_recommendations

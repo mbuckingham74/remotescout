@@ -1,4 +1,3 @@
-import datetime
 import sqlite3
 from pathlib import Path
 
@@ -6,11 +5,12 @@ import pytest
 
 from remotescout import db
 from remotescout.app import create_app
+from remotescout.business_time import business_today
 from remotescout.resume import extract_resume_text
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 RESUME_PATH = BASE_DIR / "docs" / "Michael-Buckingham-Resume-Infrastructure-Delivery-Director.pdf"
-DAY = datetime.date.today().isoformat()
+DAY = business_today().isoformat()
 
 
 @pytest.fixture
