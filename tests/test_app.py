@@ -190,6 +190,18 @@ def test_healthz_returns_200(client):
     assert response.status_code == 200
 
 
+def test_base_template_links_stylesheet(client):
+    """Regression: the shared stylesheet is the single visual contract for
+    both light and dark color schemes and must remain linked from every
+    rendered page."""
+    for path in ("/", "/tracker"):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        body = response.get_data(as_text=True)
+        assert 'rel="stylesheet"' in body
+        assert "style.css" in body
+
+
 def test_healthz_does_not_invoke_recommendation_engine(client, monkeypatch):
     def explode(*args, **kwargs):
         raise AssertionError("healthz must not invoke the recommendation engine")
