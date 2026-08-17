@@ -21,6 +21,8 @@ header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
   padding: 1rem 2rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -185,5 +187,127 @@ details summary {
     --btn-fg: #0b1220;
     --input-bg: #1a2029;
   }
+}
+
+.runs-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.run-section {
+  margin-top: 2rem;
+}
+
+.run-section h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+}
+
+.kv dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+  align-self: center;
+}
+
+.kv dd {
+  margin: 0;
+  align-self: center;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.status-badge.status-succeeded {
+  border-color: var(--accent);
+}
+
+.status-badge.status-running {
+  border-style: dashed;
+}
+
+.status-badge.status-failed {
+  border-color: #b91c1c;
+}
+
+@media (prefers-color-scheme: dark) {
+  .status-badge.status-failed {
+    border-color: #f87171;
+  }
+}
+
+.outcome-suppressed,
+.outcome-filtered {
+  color: var(--muted);
+}
+
+.outcome-error {
+  border-color: #b91c1c;
+}
+
+.outcome-recommended {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.outcome-not-reached {
+  border-style: dashed;
+}
+
+.outcome-below,
+.outcome-unresolved {
+  color: var(--muted);
+}
+
+.outcome-incomplete {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.metric-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.75rem;
+}
+
+.metric-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.65rem 0.85rem;
+}
+
+.metric-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.metric-value {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--text);
 }
 

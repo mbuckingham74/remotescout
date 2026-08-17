@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Runs - Remote Scout{% endblock %}
+{% block content %}
+<h2>Pipeline Runs</h2>
+{% if not has_runs %}
+<p class="empty-state">No instrumented runs yet. Run history will appear after the next scheduled scan.</p>
+{% else %}
+<div class="runs-table-wrapper">
+<table>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Attempt</th>
+      <th>Status</th>
+      <th>Started</th>
+      <th>Finished</th>
+      <th>Threshold</th>
+      <th>Model</th>
+      <th>Discovered</th>
+      <th>Scored</th>
+      <th>Threshold Pass</th>
+      <th>Recommended</th>
+      <th>Sources</th>
+      <th>Open</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for entry in runs %}
+    {% set run = entry["run"] %}
+    {% set summary = entry["summary"] %}
+    {% set sources = entry["sources"] %}
+    <tr>
+      <td>{{ run["recommendation_date"]|date_label }}</td>
+      <td>#{{ run["id"] }}</td>
+      <td><span class="status-badge status-{{ run['status'] }}">{{ run['status']|format_run_status }}</span></td>
+      <td class="muted">{{ run["started_at"]|format_pacific_time }}</td>
+      <td class="muted">{% if run["finished_at"] %}{{ run["finished_at"]|format_pacific_time }}{% else %}<span class="muted">Running…</span>{% endif %}</td>
+      <td>{{ "%.0f"|format(run["recommendation_threshold"]) if run["recommendation_threshold"] is not none else "—" }}</td>
+      <td class="muted">{{ run["scoring_model"] or "" }}</td>
+      <td>{{ summary["discovered"] }}</td>
+      <td>{{ summary["scoring_succeeded"] }}</td>
+      <td>{{ summary["meets_threshold"] }}</td>
+      <td>{{ summary["recommended"] }}</td>
+      <td class="muted">
+        {% if sources %}
+          {% for src in sources %}{{ src["source"]|format_source }}{% if not loop.last %}, {% endif %}{% endfor %}
+        {% else %}—{% endif %}
+      </td>
+      <td><a href="{{ url_for('run_detail', run_id=run['id']) }}">View</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

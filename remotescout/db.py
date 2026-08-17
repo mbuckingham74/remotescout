@@ -507,3 +507,54 @@ def get_pipeline_runs_for_date(connection, recommendation_date):
         "FROM pipeline_runs WHERE recommendation_date = ? ORDER BY id",
         (recommendation_date,),
     ).fetchall()
+
+
+def get_recent_pipeline_runs(connection, limit=30):
+    return connection.execute(
+        "SELECT id, recommendation_date, status, started_at, finished_at, "
+        "recommendation_threshold, scoring_model, error_type, error_message "
+        "FROM pipeline_runs ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+
+
+def get_pipeline_run_jobs_with_details(connection, run_id):
+    return connection.execute(
+        """
+        SELECT prj.id AS run_job_id,
+               prj.job_id,
+               prj.source,
+               prj.filter_passed,
+               prj.filter_reasons,
+               prj.suppressed_pre_score,
+               prj.scoring_attempted,
+               prj.scoring_succeeded,
+               prj.score,
+               prj.fit_explanation,
+               prj.strengths,
+               prj.gaps,
+               prj.meets_threshold,
+               prj.resolution_attempted,
+               prj.resolution_succeeded,
+               prj.resolution_method,
+               prj.employer_url,
+               prj.requisition_id,
+               prj.suppressed_post_resolution,
+               prj.suppressed_canonical_duplicate,
+               prj.accepted_rank,
+               prj.scoring_error_type,
+               prj.scoring_error_message,
+               j.title,
+               j.employer,
+               j.location
+        FROM pipeline_run_jobs prj
+        JOIN jobs j ON j.id = prj.job_id
+        WHERE prj.run_id = ?
+        ORDER BY prj.id
+        """,
+        (run_id,),
+    ).fetchall()
+
+
+def count_pipeline_runs(connection):
+    return connection.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0]
