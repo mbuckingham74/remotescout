@@ -311,3 +311,129 @@ details summary {
   color: var(--text);
 }
 
+.recent-runs {
+  margin: 1rem 0 1.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.recent-runs p {
+  margin: 0 0 0.5rem;
+}
+
+.recent-runs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.recent-runs-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.recent-runs-list a[aria-current="true"] {
+  font-weight: 600;
+}
+
+.threshold-passed {
+  color: var(--accent);
+}
+
+.threshold-below {
+  color: var(--muted);
+}
+
+.threshold-error {
+  color: #b91c1c;
+}
+
+@media (prefers-color-scheme: dark) {
+  .threshold-error {
+    color: #f87171;
+  }
+}
+
+.score-card {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.score-large {
+  font-size: 3rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.threshold-chip {
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+
+.threshold-chip.threshold-passed {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.strengths-list,
+.gaps-list {
+  margin: 0.25rem 0 1rem;
+  padding-left: 1.25rem;
+}
+
+.strengths-list li,
+.gaps-list li {
+  margin: 0.15rem 0;
+}
+
+.provenance-warning {
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.9rem;
+}
+
+.posting-description summary {
+  cursor: pointer;
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+
+.posting-text {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.9rem;
+}
+
+.rubric-snippet {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+

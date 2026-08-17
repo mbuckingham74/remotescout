@@ -14,6 +14,13 @@ from flask import (
 from remotescout import db
 from remotescout.business_time import BUSINESS_TIMEZONE, business_today
 from remotescout.config import load_config
+from remotescout.scoring_view import (
+    compute_near_misses,
+    compute_scoring_summary,
+    derive_scoring_outcome_label,
+    parse_gaps,
+    parse_strengths,
+)
 
 
 def _format_date_label(value):
@@ -48,6 +55,22 @@ SOURCE_STATUS_LABELS = {
 }
 
 RECENT_RUNS_LIMIT = 30
+RECENT_SCORING_RUNS_LIMIT = 10
+
+
+def _scoring_rubric_excerpt():
+    """Return a short, current application snippet of the scoring rubric.
+
+    Used on the scoring detail page as a small "current scoring rubric"
+    section. It is intentionally a current application excerpt, never a
+    claim of historical prompt provenance.
+    """
+    from remotescout import scoring
+
+    text = (scoring.SYSTEM_PROMPT or "").strip()
+    if len(text) <= 600:
+        return text
+    return text[:600].rstrip() + "…"
 
 
 def _format_pacific_time(value):
@@ -275,6 +298,9 @@ def create_app(config_overrides=None):
     app.jinja_env.filters["format_run_status"] = format_run_status
     app.jinja_env.filters["format_source_status"] = format_source_status
     app.jinja_env.filters["format_filter_reasons"] = format_filter_reasons
+    app.jinja_env.filters["scoring_outcome"] = derive_scoring_outcome_label
+    app.jinja_env.filters["parse_strengths"] = parse_strengths
+    app.jinja_env.filters["parse_gaps"] = parse_gaps
 
     @app.route("/")
     def recommendations():
@@ -386,6 +412,67 @@ def create_app(config_overrides=None):
             source_attempts=source_attempts,
             funnel=funnel,
             job_outcomes=job_outcomes,
+        )
+
+    def _scoring_view_data(connection, run_id):
+        run = db.get_pipeline_run(connection, run_id)
+        if run is None:
+            return None
+        jobs = db.get_pipeline_run_scoring_jobs(connection, run_id)
+        summary = compute_scoring_summary(jobs)
+        near_misses = compute_near_misses(jobs, run["recommendation_threshold"])
+        return {
+            "run": run,
+            "jobs": jobs,
+            "summary": summary,
+            "near_misses": near_misses,
+        }
+
+    @app.route("/scoring")
+    def scoring():
+        connection = db.get_db()
+        recent_runs = db.get_recent_pipeline_runs(
+            connection, RECENT_SCORING_RUNS_LIMIT
+        )
+        if not recent_runs:
+            return render_template("scoring.html", has_runs=False, recent_runs=[])
+        view = _scoring_view_data(connection, recent_runs[0]["id"])
+        return render_template(
+            "scoring.html",
+            has_runs=True,
+            recent_runs=recent_runs,
+            view=view,
+        )
+
+    @app.route("/runs/<int:run_id>/scoring")
+    def scoring_run(run_id):
+        connection = db.get_db()
+        view = _scoring_view_data(connection, run_id)
+        if view is None:
+            abort(404)
+        recent_runs = db.get_recent_pipeline_runs(
+            connection, RECENT_SCORING_RUNS_LIMIT
+        )
+        return render_template(
+            "scoring_run.html",
+            recent_runs=recent_runs,
+            view=view,
+        )
+
+    @app.route("/runs/<int:run_id>/scoring/<int:job_id>")
+    def scoring_detail(run_id, job_id):
+        connection = db.get_db()
+        run = db.get_pipeline_run(connection, run_id)
+        if run is None:
+            abort(404)
+        row = db.get_pipeline_run_scoring_job(connection, run_id, job_id)
+        if row is None:
+            abort(404)
+        return render_template(
+            "scoring_detail.html",
+            run=run,
+            row=row,
+            rubric_excerpt=_scoring_rubric_excerpt(),
         )
 
     return app

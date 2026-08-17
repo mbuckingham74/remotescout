@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Scoring - Remote Scout{% endblock %}
+{% block content %}
+<h2>Scoring Inspector</h2>
+{% if not has_runs %}
+<p class="empty-state">No instrumented scoring data yet. Scoring history will appear after a scheduled scan reaches this stage.</p>
+{% else %}
+<nav class="recent-runs">
+  <p class="muted">Recent runs (newest first):</p>
+  <ul class="recent-runs-list">
+    {% for r in recent_runs %}
+    <li>
+      <a href="{{ url_for('scoring_run', run_id=r['id']) }}"{% if r['id'] == view.run['id'] %} aria-current="true"{% endif %}>
+        #{{ r['id'] }} &middot; {{ r['recommendation_date']|date_label }}
+      </a>
+      <span class="status-badge status-{{ r['status'] }}">{{ r['status']|format_run_status }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% include "scoring_run_partial.html" %}
+{% endif %}
+{% endblock %}

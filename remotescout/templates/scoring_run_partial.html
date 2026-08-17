@@ -1,0 +1,102 @@
+<section class="run-section">
+  <h3>Run summary</h3>
+  <dl class="kv">
+    <dt>Date</dt><dd>{{ view.run["recommendation_date"] }}</dd>
+    <dt>Run</dt><dd>#{{ view.run["id"] }}</dd>
+    <dt>Status</dt>
+    <dd>
+      <span class="status-badge status-{{ view.run['status'] }}">{{ view.run['status']|format_run_status }}</span>
+    </dd>
+    <dt>Scoring model</dt><dd class="muted">{{ view.run["scoring_model"] or "" }}</dd>
+    <dt>Threshold</dt>
+    <dd>{% if view.run["recommendation_threshold"] is not none %}{{ "%.0f"|format(view.run["recommendation_threshold"]) }}{% else %}—{% endif %}</dd>
+  </dl>
+  <div class="metric-group">
+    <div class="metric-card"><div class="metric-label">Scoring attempted</div><div class="metric-value">{{ view.summary["scoring_attempted"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Scoring succeeded</div><div class="metric-value">{{ view.summary["scoring_succeeded"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Scoring errors</div><div class="metric-value">{{ view.summary["scoring_errors"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Threshold pass</div><div class="metric-value">{{ view.summary["meets_threshold"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Below threshold</div><div class="metric-value">{{ view.summary["below_threshold"] }}</div></div>
+  </div>
+</section>
+
+<section class="run-section">
+  <h3>Near misses</h3>
+  {% if view.near_misses is none %}
+  <p class="muted">Run threshold is not numeric, so near-miss distance is unavailable.</p>
+  {% elif view.near_misses|length == 0 %}
+  {% if view.summary["scoring_succeeded"] == 0 and view.summary["scoring_errors"] > 0 %}
+  <p class="muted">No successful scoring results in this run.</p>
+  {% else %}
+  <p class="muted">No scores landed within 10 points of the threshold.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">Successful scores in <code>threshold - 10 &le; score &lt; threshold</code>. Narrow inspection window; not broadened.</p>
+  <ul class="cards">
+    {% for row in view.near_misses %}
+    <li class="card">
+      <div class="card-head">
+        <div>
+          <h3>{{ row["title"] }}</h3>
+          <p class="muted">{{ row["employer"] }}{% if row["location"] %} &middot; {{ row["location"] }}{% endif %}</p>
+        </div>
+        <div class="score">{{ row["score"]|int }} <span class="muted">&middot; {{ (view.run["recommendation_threshold"] - row["score"])|int }} below</span></div>
+      </div>
+      <p class="explanation">{{ row["fit_explanation"] }}</p>
+      <div class="card-actions">
+        <a class="btn btn-secondary" href="{{ url_for('scoring_detail', run_id=view.run['id'], job_id=row['job_id']) }}">View score</a>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section class="run-section">
+  <h3>All scoring attempts</h3>
+  {% if view.summary["scoring_attempted"] == 0 %}
+  <p class="muted">No jobs reached scoring in this run.</p>
+  {% elif view.summary["scoring_succeeded"] == 0 %}
+  <p class="muted">Scoring was attempted for {{ view.summary["scoring_attempted"] }} job{% if view.summary["scoring_attempted"] != 1 %}s{% endif %} but produced no successful scores; {{ view.summary["scoring_errors"] }} error{% if view.summary["scoring_errors"] != 1 %}s{% endif %} recorded.</p>
+  {% else %}
+  <div class="runs-table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Score</th>
+        <th>Threshold</th>
+        <th>Title</th>
+        <th>Employer</th>
+        <th>Source</th>
+        <th>Outcome</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in view.jobs %}
+      <tr>
+        <td>
+          {% if row["scoring_attempted"] and not row["scoring_succeeded"] %}
+            <span class="muted">Error</span>
+          {% elif row["score"] is not none %}{{ row["score"]|int }}
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if row["scoring_attempted"] and not row["scoring_succeeded"] %}
+            <span class="threshold-error">Error</span>
+          {% elif row["meets_threshold"] %}<span class="threshold-passed">Passed</span>
+          {% elif row["scoring_succeeded"] %}<span class="threshold-below">Below</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ row["title"] }}</td>
+        <td>{{ row["employer"] }}</td>
+        <td class="muted">{{ row["source"]|format_source }}</td>
+        <td>{{ row|scoring_outcome }}</td>
+        <td><a href="{{ url_for('scoring_detail', run_id=view.run['id'], job_id=row['job_id']) }}">View</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>

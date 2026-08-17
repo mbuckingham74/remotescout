@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Scoring Run #{{ view.run["id"] }} - Remote Scout{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('scoring') }}">&larr; Scoring</a> &middot; <a href="{{ url_for('run_detail', run_id=view.run['id']) }}">Run details</a></p>
+<h2>Scoring &middot; Run #{{ view.run["id"] }} &middot; {{ view.run["recommendation_date"]|date_label }}</h2>
+
+<nav class="recent-runs">
+  <p class="muted">Recent runs (newest first):</p>
+  <ul class="recent-runs-list">
+    {% for r in recent_runs %}
+    <li>
+      <a href="{{ url_for('scoring_run', run_id=r['id']) }}"{% if r['id'] == view.run['id'] %} aria-current="true"{% endif %}>
+        #{{ r['id'] }} &middot; {{ r['recommendation_date']|date_label }}
+      </a>
+      <span class="status-badge status-{{ r['status'] }}">{{ r['status']|format_run_status }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>
+
+{% include "scoring_run_partial.html" %}
+{% endblock %}

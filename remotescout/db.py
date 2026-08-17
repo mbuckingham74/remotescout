@@ -558,3 +558,85 @@ def get_pipeline_run_jobs_with_details(connection, run_id):
 
 def count_pipeline_runs(connection):
     return connection.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0]
+
+
+def get_pipeline_run_scoring_jobs(connection, run_id):
+    """Return per-job scoring evidence joined with current job fields.
+
+    Restricted to ``scoring_attempted = 1`` rows so the scoring inspector
+    only inspects jobs that actually reached scoring for this run.
+    """
+    return connection.execute(
+        """
+        SELECT prj.id AS run_job_id,
+               prj.job_id,
+               prj.source,
+               prj.scoring_attempted,
+               prj.scoring_succeeded,
+               prj.score,
+               prj.fit_explanation,
+               prj.strengths,
+               prj.gaps,
+               prj.meets_threshold,
+               prj.scoring_error_type,
+               prj.scoring_error_message,
+               prj.resolution_attempted,
+               prj.resolution_succeeded,
+               prj.resolution_method,
+               prj.suppressed_post_resolution,
+               prj.suppressed_canonical_duplicate,
+               prj.accepted_rank,
+               j.title,
+               j.employer,
+               j.location,
+               j.description,
+               j.source_url,
+               j.employer_url
+        FROM pipeline_run_jobs prj
+        JOIN jobs j ON j.id = prj.job_id
+        WHERE prj.run_id = ? AND prj.scoring_attempted = 1
+        ORDER BY prj.id
+        """,
+        (run_id,),
+    ).fetchall()
+
+
+def get_pipeline_run_scoring_job(connection, run_id, job_id):
+    """Return the single run/job scoring record if scoring was attempted.
+
+    Returns ``None`` for unknown run/job pairs or for jobs that never
+    reached scoring in that run, so the route can 404 truthfully rather
+    than fall back to the global ``jobs.score`` row.
+    """
+    return connection.execute(
+        """
+        SELECT prj.id AS run_job_id,
+               prj.job_id,
+               prj.source,
+               prj.scoring_attempted,
+               prj.scoring_succeeded,
+               prj.score,
+               prj.fit_explanation,
+               prj.strengths,
+               prj.gaps,
+               prj.meets_threshold,
+               prj.scoring_error_type,
+               prj.scoring_error_message,
+               prj.resolution_attempted,
+               prj.resolution_succeeded,
+               prj.resolution_method,
+               prj.suppressed_post_resolution,
+               prj.suppressed_canonical_duplicate,
+               prj.accepted_rank,
+               j.title,
+               j.employer,
+               j.location,
+               j.description,
+               j.source_url,
+               j.employer_url
+        FROM pipeline_run_jobs prj
+        JOIN jobs j ON j.id = prj.job_id
+        WHERE prj.run_id = ? AND prj.job_id = ? AND prj.scoring_attempted = 1
+        """,
+        (run_id, job_id),
+    ).fetchone()

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Scoring Run #{{ run["id"] }} &middot; Job #{{ row["job_id"] }} - Remote Scout{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('scoring_run', run_id=run['id']) }}">&larr; Run #{{ run["id"] }} scoring</a> &middot; <a href="{{ url_for('run_detail', run_id=run['id']) }}">Run details</a></p>
+<h2>{{ row["title"] }}</h2>
+<p class="muted">{{ row["employer"] }}{% if row["location"] %} &middot; {{ row["location"] }}{% endif %}</p>
+
+<section class="run-section">
+  <h3>Identity &amp; context</h3>
+  <dl class="kv">
+    <dt>Title</dt><dd>{{ row["title"] }}</dd>
+    <dt>Employer</dt><dd>{{ row["employer"] }}</dd>
+    {% if row["location"] %}
+    <dt>Location</dt><dd>{{ row["location"] }}</dd>
+    {% endif %}
+    <dt>Source</dt><dd>{{ row["source"]|format_source }}</dd>
+    <dt>Business date</dt><dd>{{ run["recommendation_date"] }}</dd>
+    <dt>Run</dt><dd>#{{ run["id"] }}</dd>
+    <dt>Scoring model</dt><dd class="muted">{{ run["scoring_model"] or "" }}</dd>
+    <dt>Threshold</dt>
+    <dd>{% if run["recommendation_threshold"] is not none %}{{ "%.0f"|format(run["recommendation_threshold"]) }}{% else %}—{% endif %}</dd>
+    <dt>Downstream outcome</dt><dd>{{ row|scoring_outcome }}</dd>
+  </dl>
+</section>
+
+<section class="run-section">
+  <h3>Scoring result</h3>
+  {% if row["scoring_succeeded"] %}
+  <div class="score-card">
+    <div class="score score-large">{{ row["score"]|int }}</div>
+    <div class="threshold-chip {% if row['meets_threshold'] %}threshold-passed{% else %}threshold-below{% endif %}">
+      {% if row["meets_threshold"] %}Passed{% else %}Below{% endif %}
+    </div>
+  </div>
+  <p class="explanation">{{ row["fit_explanation"] }}</p>
+  {% set strengths = row["strengths"]|parse_strengths %}
+  {% set gaps = row["gaps"]|parse_gaps %}
+  <h4>Strengths</h4>
+  {% if strengths %}
+  <ul class="strengths-list">
+    {% for s in strengths %}<li>{{ s }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No strengths were returned.</p>
+  {% endif %}
+  <h4>Gaps</h4>
+  {% if gaps %}
+  <ul class="gaps-list">
+    {% for g in gaps %}<li>{{ g }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No gaps were returned.</p>
+  {% endif %}
+  {% else %}
+  <p class="threshold-error">Scoring failed.</p>
+  <dl class="kv">
+    <dt>Error type</dt><dd>{{ row["scoring_error_type"] or "" }}</dd>
+    <dt>Error message</dt><dd>{{ row["scoring_error_message"] or "" }}</dd>
+  </dl>
+  {% endif %}
+</section>
+
+<section class="run-section">
+  <h3>Current stored posting</h3>
+  <p class="provenance-warning">
+    Current stored posting. Remote Scout did not archive the exact scoring request for this run, so later source updates may differ from what was evaluated.
+  </p>
+  <dl class="kv">
+    <dt>Title</dt><dd>{{ row["title"] }}</dd>
+    <dt>Employer</dt><dd>{{ row["employer"] }}</dd>
+    {% if row["location"] %}
+    <dt>Location</dt><dd>{{ row["location"] }}</dd>
+    {% endif %}
+    {% if row["source_url"] %}
+    <dt>Source URL</dt><dd class="muted">{{ row["source_url"] }}</dd>
+    {% endif %}
+  </dl>
+  <details class="posting-description">
+    <summary>Current stored description</summary>
+    <pre class="posting-text">{{ row["description"] or "" }}</pre>
+  </details>
+</section>
+
+<section class="run-section">
+  <h3>Current scoring rubric</h3>
+  <p class="muted">
+    Application configuration only &mdash; not a historical snapshot of the exact Anthropic payload for this run.
+    <a href="https://github.com/mbuckingham74/remotescout/blob/main/remotescout/scoring.py" target="_blank" rel="noopener">View scoring.py</a>.
+  </p>
+  <pre class="rubric-snippet">{{ rubric_excerpt }}</pre>
+</section>
+{% endblock %}
