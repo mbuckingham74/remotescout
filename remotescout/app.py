@@ -3,7 +3,6 @@ import datetime
 from flask import (
     Flask,
     abort,
-    current_app,
     g,
     redirect,
     render_template,
@@ -11,7 +10,7 @@ from flask import (
     url_for,
 )
 
-from remotescout import db, engine
+from remotescout import db
 from remotescout.config import load_config
 
 
@@ -38,21 +37,16 @@ def create_app(config_overrides=None):
         today = datetime.date.today().isoformat()
         connection = db.get_db()
         pinned = db.get_recommendations(connection, today)
-        error = False
-        if not pinned and not db.is_recommendation_day_complete(connection, today):
-            try:
-                pinned = engine.build_daily_recommendations(
-                    connection, recommendation_date=today
-                )
-            except Exception:
-                current_app.logger.exception("Failed to build daily recommendations")
-                pinned = []
-                error = True
+        if not db.is_recommendation_day_complete(connection, today):
+            return render_template(
+                "recommendations.html",
+                day=today,
+                recommendations=[],
+                state="pending",
+            )
         applied_job_ids = {row["job_id"] for row in db.get_applied_jobs(connection)}
         active = [row for row in pinned if row["job_id"] not in applied_job_ids]
-        if error:
-            state = "error"
-        elif not pinned:
+        if not pinned:
             state = "empty"
         elif not active:
             state = "all_applied"

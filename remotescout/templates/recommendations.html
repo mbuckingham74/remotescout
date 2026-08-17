@@ -2,8 +2,8 @@
 {% block title %}Recommendations - Remote Scout{% endblock %}
 {% block content %}
 <h2>Recommendations for {{ day }}</h2>
-{% if state == "error" %}
-<p class="empty-state">Recommendations couldn't be generated right now. Please try again later.</p>
+{% if state == "pending" %}
+<p class="empty-state">Today's scan hasn't completed yet. Check back after the scheduled run.</p>
 {% elif state == "empty" %}
 <p class="empty-state">No strong matches today.</p>
 {% elif state == "all_applied" %}

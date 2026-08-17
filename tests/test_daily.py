@@ -237,18 +237,6 @@ def test_module_entry_runs_pipeline(tmp_path, monkeypatch, capsys):
     assert f"0 recommendations for {DAY}" in capsys.readouterr().out
 
 
-def test_lazy_fallback_runs_when_day_incomplete(config, monkeypatch):
-    monkeypatch.setattr(
-        "remotescout.engine.build_daily_recommendations",
-        fake_engine([]),
-    )
-    app = create_app({"DATABASE_PATH": config["DATABASE_PATH"]})
-    response = app.test_client().get("/")
-    assert response.status_code == 200
-    with app.app_context():
-        assert db.is_recommendation_day_complete(db.get_db(), DAY)
-
-
 def test_open_does_not_rerun_after_daily_command(config, monkeypatch):
     rows = seed_job_rows(open_connection(config["DATABASE_PATH"]))
     exit_code, _ = daily.run_daily(

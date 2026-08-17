@@ -1,3 +1,4 @@
+import datetime
 import sqlite3
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from remotescout.resume import extract_resume_text
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 RESUME_PATH = BASE_DIR / "docs" / "Michael-Buckingham-Resume-Infrastructure-Delivery-Director.pdf"
+DAY = datetime.date.today().isoformat()
 
 
 @pytest.fixture
@@ -23,10 +25,16 @@ def client(app):
 
 @pytest.fixture(autouse=True)
 def no_engine(monkeypatch):
-    def build(connection, recommendation_date=None, **kwargs):
-        return []
+    """Safety net: GET / must never invoke the recommendation engine.
 
-    monkeypatch.setattr("remotescout.engine.build_daily_recommendations", build)
+    If a regression reintroduces engine work in the browser request path,
+    this fixture ensures the test fails loudly instead of silently doing
+    live discovery/scoring/resolution work.
+    """
+    def explode(*args, **kwargs):
+        raise AssertionError("GET / must not invoke the recommendation engine")
+
+    monkeypatch.setattr("remotescout.engine.build_daily_recommendations", explode)
 
 
 def test_application_starts(client):
@@ -55,11 +63,120 @@ def test_resume_extracts_nonempty_text():
     assert len(text.strip()) > 500
 
 
-def test_recommendations_page_renders(client):
+def test_pending_state_when_day_incomplete(client):
     response = client.get("/")
     assert response.status_code == 200
-    assert "Recommendations" in response.get_data(as_text=True)
-    assert "No strong matches today." in response.get_data(as_text=True)
+    body = response.get_data(as_text=True)
+    assert "Recommendations" in body
+    assert "hasn't completed yet" in body
+    assert "No strong matches today." not in body
+
+
+def test_completed_empty_day_renders_empty_state(app, client):
+    with app.app_context():
+        connection = db.get_db()
+        db.mark_recommendation_day_complete(connection, DAY)
+        connection.commit()
+    response = client.get("/")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "No strong matches today." in body
+    assert "hasn't completed yet" not in body
+
+
+def test_completed_day_with_recommendations_renders_them(app, client):
+    with app.app_context():
+        connection = db.get_db()
+        job_id = db.create_job(
+            connection,
+            title="Senior Product Manager",
+            employer="Acme Inc.",
+            employer_url="https://boards.greenhouse.io/acme/jobs/1234",
+        )
+        connection.execute(
+            "INSERT INTO recommendations (date, rank, job_id, score, explanation) "
+            "VALUES (?, 1, ?, 92, 'Strong delivery leadership match.')",
+            (DAY, job_id),
+        )
+        db.mark_recommendation_day_complete(connection, DAY)
+        connection.commit()
+    response = client.get("/")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Senior Product Manager" in body
+    assert "Acme Inc." in body
+    assert "Strong delivery leadership match." in body
+
+
+def test_pending_state_does_not_invoke_recommendation_engine(app, client):
+    """Primary regression: GET / on an incomplete day never invokes the engine."""
+    with app.app_context():
+        connection = db.get_db()
+        assert not db.is_recommendation_day_complete(connection, DAY)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "hasn't completed yet" in response.get_data(as_text=True)
+
+
+def test_completed_state_does_not_invoke_recommendation_engine(app, client):
+    """GET / on a completed day never invokes the engine, regardless of result count."""
+    with app.app_context():
+        connection = db.get_db()
+        job_id = db.create_job(
+            connection,
+            title="Senior Product Manager",
+            employer="Acme Inc.",
+        )
+        connection.execute(
+            "INSERT INTO recommendations (date, rank, job_id, score, explanation) "
+            "VALUES (?, 1, ?, 92, 'Match.')",
+            (DAY, job_id),
+        )
+        db.mark_recommendation_day_complete(connection, DAY)
+        connection.commit()
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Senior Product Manager" in response.get_data(as_text=True)
+
+
+def test_all_applied_state_preserved_without_engine_call(app, client):
+    with app.app_context():
+        connection = db.get_db()
+        job_id = db.create_job(
+            connection,
+            title="Senior Product Manager",
+            employer="Acme Inc.",
+        )
+        connection.execute(
+            "INSERT INTO recommendations (date, rank, job_id, score, explanation) "
+            "VALUES (?, 1, ?, 92, 'Match.')",
+            (DAY, job_id),
+        )
+        db.mark_recommendation_day_complete(connection, DAY)
+        db.mark_job_applied(connection, job_id, DAY)
+        connection.commit()
+    response = client.get("/")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "You've handled today's recommendations." in body
+    assert "Senior Product Manager" not in body
+
+
+def test_recommendations_page_does_no_external_network_work(client, monkeypatch):
+    def explode(*args, **kwargs):
+        raise AssertionError("GET / must not open network connections")
+
+    monkeypatch.setattr("urllib.request.urlopen", explode)
+    monkeypatch.setattr("remotescout.discovery.weworkremotely.fetch_jobs", explode)
+    monkeypatch.setattr("remotescout.resolution.resolve_job", explode)
+    response = client.get("/")
+    assert response.status_code == 200
+
+
+def test_recommendations_page_does_not_require_anthropic(client, monkeypatch):
+    monkeypatch.setattr("remotescout.config.load_config", lambda: {"ANTHROPIC_API_KEY": ""})
+    response = client.get("/")
+    assert response.status_code == 200
 
 
 def test_tracker_page_renders(client):

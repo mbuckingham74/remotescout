@@ -34,6 +34,7 @@ def seed_recommendations(connection, jobs):
             "VALUES (?, ?, ?, ?, ?)",
             (DAY, rank, job_id, 90 - rank, f"Explanation for rank {rank}."),
         )
+    db.mark_recommendation_day_complete(connection, DAY)
     connection.commit()
 
 
@@ -333,11 +334,7 @@ class TestValidation:
 
 
 class TestHistory:
-    def test_tracker_displays_initial_applied_event(self, app, client, monkeypatch):
-        monkeypatch.setattr(
-            "remotescout.engine.build_daily_recommendations",
-            lambda connection, recommendation_date=None, **kwargs: [],
-        )
+    def test_tracker_displays_initial_applied_event(self, app, client):
         with app.app_context():
             connection = db.get_db()
             job_id = create_job(connection)
@@ -410,11 +407,7 @@ class TestHistory:
 
 
 class TestRegression:
-    def test_recommendation_to_applied_creates_exactly_one_initial_event(self, app, client, monkeypatch):
-        monkeypatch.setattr(
-            "remotescout.engine.build_daily_recommendations",
-            lambda connection, recommendation_date=None, **kwargs: [],
-        )
+    def test_recommendation_to_applied_creates_exactly_one_initial_event(self, app, client):
         with app.app_context():
             connection = db.get_db()
             job_id = create_job(connection)
@@ -431,29 +424,17 @@ class TestRegression:
         assert page.count("Applied &mdash;") == 1
 
     def test_marking_applied_removes_card_without_refill(self, app, client, monkeypatch):
-        calls = []
+        def explode(*args, **kwargs):
+            raise AssertionError("GET / must not invoke the recommendation engine on a completed day")
 
-        def fake_engine(connection, recommendation_date=None, **kwargs):
-            calls.append(recommendation_date)
-            for rank, job_id in enumerate((self_job_a, self_job_b), start=1):
-                connection.execute(
-                    "INSERT INTO recommendations (date, rank, job_id, score, explanation) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (DAY, rank, job_id, 92 - rank, f"Explanation for rank {rank}."),
-                )
-            db.mark_recommendation_day_complete(connection, DAY)
-            connection.commit()
-            return db.get_recommendations(connection, DAY)
-
+        monkeypatch.setattr("remotescout.engine.build_daily_recommendations", explode)
         with app.app_context():
             connection = db.get_db()
             self_job_a = create_job(connection, title="Role A")
             self_job_b = create_job(connection, title="Role B")
-        monkeypatch.setattr("remotescout.engine.build_daily_recommendations", fake_engine)
+            seed_recommendations(connection, [self_job_a, self_job_b])
         client.get("/")
-        assert calls == [DAY]
         client.post(f"/recommendations/{self_job_a}/applied")
         page = html(client.get("/"))
         assert "Role A" not in page
         assert "Role B" in page
-        assert calls == [DAY]
