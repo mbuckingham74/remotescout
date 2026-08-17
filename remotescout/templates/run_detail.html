@@ -69,9 +69,15 @@
   <h3>Funnel</h3>
   <div class="metric-group">
     <div class="metric-card"><div class="metric-label">Discovered</div><div class="metric-value">{{ funnel["discovered"] }}</div></div>
-    <div class="metric-card"><div class="metric-label">Filter passed</div><div class="metric-value">{{ funnel["filter_passed"] }}</div></div>
     <div class="metric-card"><div class="metric-label">Filter rejected</div><div class="metric-value">{{ funnel["filter_rejected"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Filter passed</div><div class="metric-value">{{ funnel["filter_passed"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Already processed</div><div class="metric-value">{{ funnel["already_processed"] }}</div></div>
     <div class="metric-card"><div class="metric-label">Pre-score applied</div><div class="metric-value">{{ funnel["pre_score_applied"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Positive-gate passed</div><div class="metric-value">{{ funnel["positive_gate_passed"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Positive-gate rejected</div><div class="metric-value">{{ funnel["positive_gate_rejected"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Eligible for scoring</div><div class="metric-value">{{ funnel["eligible_for_scoring"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Budget deferred</div><div class="metric-value">{{ funnel["scoring_budget_deferred"] }}</div></div>
+    <div class="metric-card"><div class="metric-label">Scoring reused</div><div class="metric-value">{{ funnel["scoring_reused"] }}</div></div>
     <div class="metric-card"><div class="metric-label">Scoring attempted</div><div class="metric-value">{{ funnel["scoring_attempted"] }}</div></div>
     <div class="metric-card"><div class="metric-label">Scoring succeeded</div><div class="metric-value">{{ funnel["scoring_succeeded"] }}</div></div>
     <div class="metric-card"><div class="metric-label">Scoring errors</div><div class="metric-value">{{ funnel["scoring_errors"] }}</div></div>
@@ -123,6 +129,8 @@
           <td>
             {% if row["scoring_attempted"] and not row["scoring_succeeded"] %}
               <span class="muted">Error</span>
+            {% elif row["scoring_reused"] %}
+              Pass <span class="muted">(reused)</span>
             {% elif row["meets_threshold"] %}Pass{% elif row["scoring_succeeded"] %}Below{% else %}—{% endif %}
           </td>
           <td>

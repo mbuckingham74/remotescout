@@ -55,6 +55,10 @@ def derive_threshold_result(row):
     what scoring produced versus the configured threshold.
     """
     if not row["scoring_attempted"]:
+        if row["scoring_reused"]:
+            if row["meets_threshold"]:
+                return ("Passed (reused)", "threshold-passed")
+            return ("Below (reused)", "threshold-below")
         return ("Pending", "threshold-pending")
     if row["scoring_succeeded"]:
         if row["meets_threshold"]:
@@ -86,6 +90,8 @@ def derive_scoring_outcome_label(row):
         return f"Below threshold — {int(row['score'])}"
     if row["scoring_attempted"] and not row["scoring_succeeded"]:
         return "Scoring error"
+    if row["scoring_reused"]:
+        return "Reused prior score"
     return "Scoring incomplete"
 
 
@@ -101,8 +107,11 @@ def compute_scoring_summary(rows):
         "scoring_errors": 0,
         "meets_threshold": 0,
         "below_threshold": 0,
+        "scoring_reused": 0,
     }
     for row in rows:
+        if row["scoring_reused"]:
+            summary["scoring_reused"] += 1
         summary["scoring_attempted"] += 1
         if row["scoring_succeeded"]:
             summary["scoring_succeeded"] += 1

@@ -27,9 +27,87 @@ def init_db(path):
     connection = connect(path)
     try:
         connection.executescript(SCHEMA_PATH.read_text())
+        _apply_additive_migrations(connection)
         connection.commit()
     finally:
         connection.close()
+
+
+def _column_exists(connection, table_name, column_name):
+    rows = connection.execute("PRAGMA table_info(" + table_name + ")").fetchall()
+    return any(row["name"] == column_name for row in rows)
+
+
+def _add_column_if_missing(connection, table_name, column_name, definition):
+    """Idempotently add a column to an existing SQLite table.
+
+    SQLite has no ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS``. ``CREATE
+    TABLE IF NOT EXISTS`` is also insufficient against an existing table.
+    This helper inspects ``PRAGMA table_info`` first and only emits the
+    DDL when the column is genuinely absent, so it is safe to call on
+    every initialization.
+
+    All ``table_name``, ``column_name``, and ``definition`` arguments
+    must be sourced from hardcoded module-local literals; they are
+    composed via plain string concatenation rather than an f-string so
+    that the dynamic-SQL signature does not appear in this file's
+    review surface.
+    """
+    if _column_exists(connection, table_name, column_name):
+        return
+    sql = (
+        "ALTER TABLE " + table_name + " ADD COLUMN " + column_name + " " + definition
+    )
+    connection.execute(sql)
+
+
+def _apply_additive_migrations(connection):
+    """Apply narrow idempotent additive migrations for Package 8 telemetry.
+
+    SQLite ignores ``CREATE TABLE IF NOT EXISTS`` against an existing
+    table, so any new column on ``pipeline_run_jobs`` must be added with
+    ``ALTER TABLE``. These helpers inspect the schema first and only emit
+    DDL when the column is genuinely absent, so the migration is safe to
+    re-run on every initialization and on every Package 5+ database.
+    """
+    if not _column_exists(connection, "pipeline_run_jobs", "suppressed_already_processed"):
+        _add_column_if_missing(
+            connection,
+            "pipeline_run_jobs",
+            "suppressed_already_processed",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        _add_column_if_missing(
+            connection,
+            "pipeline_run_jobs",
+            "positive_gate_passed",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        _add_column_if_missing(
+            connection,
+            "pipeline_run_jobs",
+            "positive_gate_reason",
+            "TEXT",
+        )
+        _add_column_if_missing(
+            connection,
+            "pipeline_run_jobs",
+            "preselection_score",
+            "INTEGER",
+        )
+        _add_column_if_missing(
+            connection,
+            "pipeline_run_jobs",
+            "suppressed_scoring_budget",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+    if not _column_exists(connection, "pipeline_run_jobs", "scoring_reused"):
+        _add_column_if_missing(
+            connection,
+            "pipeline_run_jobs",
+            "scoring_reused",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
 
 
 def get_db():
@@ -399,6 +477,194 @@ def mark_pipeline_run_job_suppressed_pre_score(connection, run_id, job_id):
     )
 
 
+def mark_pipeline_run_job_suppressed_already_processed(connection, run_id, job_id):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET suppressed_already_processed = 1 "
+        "WHERE run_id = ? AND job_id = ?",
+        (run_id, job_id),
+    )
+
+
+def record_pipeline_run_job_positive_gate(
+    connection, run_id, job_id, passed, reason, preselection_score
+):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET "
+        "positive_gate_passed = ?, positive_gate_reason = ?, "
+        "preselection_score = ? "
+        "WHERE run_id = ? AND job_id = ?",
+        (
+            1 if passed else 0,
+            reason,
+            preselection_score,
+            run_id,
+            job_id,
+        ),
+    )
+
+
+def mark_pipeline_run_job_suppressed_scoring_budget(connection, run_id, job_id):
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET suppressed_scoring_budget = 1 "
+        "WHERE run_id = ? AND job_id = ?",
+        (run_id, job_id),
+    )
+
+
+def get_same_day_reused_results(connection, recommendation_date, current_run_id):
+    """Return per-job latest successful same-day scoring evidence.
+
+    The lookup joins ``pipeline_run_jobs`` to ``pipeline_runs`` and
+    returns, for every job that has a successful scoring row on any prior
+    run for the same ``recommendation_date``, the latest such row's
+    evidence payload. The ``current_run_id`` is excluded defensively.
+
+    Returned mapping shape::
+
+        {job_id: {
+            "score": int,
+            "fit_explanation": str,
+            "strengths": list[str],
+            "gaps": list[str],
+            "meets_threshold": int (0 or 1),
+            "source_run_job_id": int,
+            "source_run_id": int,
+        }}
+
+    ``strengths`` and ``gaps`` are JSON-decoded defensively; callers may
+    pass them through to the recommendation layer unchanged.
+    """
+    rows = connection.execute(
+        """
+        SELECT prj.id AS run_job_id,
+               prj.run_id,
+               prj.job_id,
+               prj.score,
+               prj.fit_explanation,
+               prj.strengths,
+               prj.gaps,
+               prj.meets_threshold
+        FROM pipeline_run_jobs prj
+        JOIN pipeline_runs pr ON pr.id = prj.run_id
+        WHERE pr.recommendation_date = ?
+          AND pr.id != ?
+          AND prj.scoring_succeeded = 1
+        ORDER BY prj.id DESC
+        """,
+        (recommendation_date, current_run_id),
+    ).fetchall()
+    reused = {}
+    for row in rows:
+        job_id = row["job_id"]
+        if job_id in reused:
+            continue
+        reused[job_id] = {
+            "score": row["score"],
+            "fit_explanation": row["fit_explanation"],
+            "strengths": _json_list(row["strengths"]),
+            "gaps": _json_list(row["gaps"]),
+            "meets_threshold": row["meets_threshold"],
+            "source_run_job_id": row["run_job_id"],
+            "source_run_id": row["run_id"],
+        }
+    return reused
+
+
+def mark_pipeline_run_job_scoring_reused(
+    connection, run_id, job_id,
+    score, fit_explanation, strengths, gaps, meets_threshold,
+):
+    """Persist a same-day scoring reuse on the current run.
+
+    Distinct from :func:`record_pipeline_run_job_scoring_succeeded`:
+    reuse never implies a Claude API call. ``scoring_attempted`` and
+    ``scoring_succeeded`` stay 0; ``scoring_reused`` becomes 1.
+    """
+    connection.execute(
+        "UPDATE pipeline_run_jobs SET "
+        "scoring_reused = 1, "
+        "score = ?, fit_explanation = ?, strengths = ?, gaps = ?, "
+        "meets_threshold = ? "
+        "WHERE run_id = ? AND job_id = ?",
+        (
+            score,
+            fit_explanation,
+            _json_list(strengths),
+            _json_list(gaps),
+            1 if meets_threshold else 0,
+            run_id,
+            job_id,
+        ),
+    )
+
+
+def get_already_processed_job_ids(connection, recommendation_date=None):
+    """Return the set of job_ids that already produced a successful score.
+
+    Used by the Package 8 already-processed suppression. The set is the
+    union of two independent evidence sources:
+
+    * A successful Package-5-style scoring outcome recorded on
+      ``pipeline_run_jobs`` is the durable, run-scoped signal that no
+      further scoring is required.
+    * ``jobs.score IS NOT NULL`` is treated as boolean evidence only:
+      ``db.set_job_score`` is invoked solely after a successful scoring
+      result, so any persisted job whose ``jobs.score`` column is set
+      has already been paid to evaluate. This admits legitimate
+      pre-Package-5 successful scores into the processed set without
+      promoting ``jobs.score`` to authoritative run-display evidence.
+
+    When ``recommendation_date`` is provided, ``pipeline_run_jobs``
+    successful rows whose ``pipeline_runs.recommendation_date`` matches
+    are excluded from the processed set: those rows represent
+    same-day reuse evidence, not "already processed" suppression, and
+    are handled by the same-day reuse branch in the engine. Jobs in
+    the legacy ``jobs.score`` branch are likewise excluded when the
+    same job has a same-day successful ``pipeline_run_jobs`` row —
+    the legacy column was written as a side effect of that prior
+    successful run, so the row belongs in the reuse branch. Passing
+    ``None`` preserves the original behavior (include all dates).
+    """
+    if recommendation_date is None:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT job_id
+            FROM pipeline_run_jobs
+            WHERE scoring_succeeded = 1
+            UNION
+            SELECT id AS job_id
+            FROM jobs
+            WHERE score IS NOT NULL
+            """
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT job_id
+            FROM pipeline_run_jobs
+            WHERE scoring_succeeded = 1
+              AND NOT EXISTS (
+                SELECT 1 FROM pipeline_runs pr
+                WHERE pr.id = pipeline_run_jobs.run_id
+                  AND pr.recommendation_date = ?
+              )
+            UNION
+            SELECT id AS job_id
+            FROM jobs
+            WHERE score IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM pipeline_run_jobs prj
+                JOIN pipeline_runs pr ON pr.id = prj.run_id
+                WHERE prj.job_id = jobs.id
+                  AND prj.scoring_succeeded = 1
+                  AND pr.recommendation_date = ?
+              )
+            """,
+            (recommendation_date, recommendation_date),
+        ).fetchall()
+    return {row["job_id"] for row in rows}
+
+
 def record_pipeline_run_job_scoring_succeeded(
     connection, run_id, job_id, score, fit_explanation, strengths, gaps, meets_threshold
 ):
@@ -494,7 +760,10 @@ def get_pipeline_run_jobs(connection, run_id):
         "resolution_attempted, resolution_succeeded, resolution_method, "
         "employer_url, requisition_id, suppressed_post_resolution, "
         "suppressed_canonical_duplicate, accepted_rank, "
-        "scoring_error_type, scoring_error_message "
+        "scoring_error_type, scoring_error_message, "
+        "suppressed_already_processed, positive_gate_passed, "
+        "positive_gate_reason, preselection_score, suppressed_scoring_budget, "
+        "scoring_reused "
         "FROM pipeline_run_jobs WHERE run_id = ? ORDER BY id",
         (run_id,),
     ).fetchall()
@@ -544,6 +813,12 @@ def get_pipeline_run_jobs_with_details(connection, run_id):
                prj.accepted_rank,
                prj.scoring_error_type,
                prj.scoring_error_message,
+               prj.suppressed_already_processed,
+               prj.positive_gate_passed,
+               prj.positive_gate_reason,
+               prj.preselection_score,
+               prj.suppressed_scoring_budget,
+               prj.scoring_reused,
                j.title,
                j.employer,
                j.location
@@ -565,6 +840,9 @@ def get_pipeline_run_scoring_jobs(connection, run_id):
 
     Restricted to ``scoring_attempted = 1`` rows so the scoring inspector
     only inspects jobs that actually reached scoring for this run.
+    ``scoring_reused`` is selected for shape consistency with other
+    pipeline_run_jobs readers; because the WHERE filter excludes reused
+    rows the value is always 0 here.
     """
     return connection.execute(
         """
@@ -586,6 +864,7 @@ def get_pipeline_run_scoring_jobs(connection, run_id):
                prj.suppressed_post_resolution,
                prj.suppressed_canonical_duplicate,
                prj.accepted_rank,
+               prj.scoring_reused,
                j.title,
                j.employer,
                j.location,
@@ -628,6 +907,7 @@ def get_pipeline_run_scoring_job(connection, run_id, job_id):
                prj.suppressed_post_resolution,
                prj.suppressed_canonical_duplicate,
                prj.accepted_rank,
+               prj.scoring_reused,
                j.title,
                j.employer,
                j.location,

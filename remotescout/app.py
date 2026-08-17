@@ -132,7 +132,23 @@ def derive_job_outcome(row):
     Precedence reflects actual pipeline execution: an accepted recommendation
     is the most terminal state, followed by suppression types, then resolved
     attempts that did not qualify, then threshold outcomes, then scoring
-    errors, then pre-score applied suppression, then filter rejections.
+    errors, then pre-score applied suppression, then already-processed
+    suppression, then scoring-budget deferral, then positive-gate rejection,
+    then filter rejections.
+
+    The Package 8 pre-scoring states (already-processed, outside target
+    role families, deferred-by-budget) sit between scoring outcomes and
+    filter rejections because they never reach scoring in this run.
+
+    A reused same-day score (``scoring_reused = 1``) that did not reach
+    a terminal downstream state is rendered as ``"Reused prior score"``
+    so the operator sees that no paid scoring call occurred.
+
+    Legacy Package 5–7 rows without ``positive_gate_reason`` set retain
+    the pre-Package-8 behavior: a row that survived the filter and was
+    not pre-score applied, but did not yet reach scoring, is rendered
+    as ``"Filter passed (incomplete)"`` because the gate concept did
+    not exist for those runs.
     """
     if row["accepted_rank"]:
         return (f"Recommended #{row['accepted_rank']}", "outcome-recommended")
@@ -142,6 +158,8 @@ def derive_job_outcome(row):
         return ("Already applied — after resolution", "outcome-suppressed")
     if row["resolution_attempted"] and not row["resolution_succeeded"]:
         return ("Unresolved employer posting", "outcome-unresolved")
+    if row["scoring_reused"] and not row["scoring_attempted"]:
+        return ("Reused prior score", "outcome-reused")
     if row["meets_threshold"] and not row["resolution_attempted"]:
         return ("Resolution not reached", "outcome-not-reached")
     if row["scoring_succeeded"] and not row["meets_threshold"]:
@@ -153,6 +171,12 @@ def derive_job_outcome(row):
         return ("Scoring error", "outcome-error")
     if row["suppressed_pre_score"]:
         return ("Already applied — before scoring", "outcome-suppressed")
+    if row["suppressed_already_processed"]:
+        return ("Already processed", "outcome-suppressed")
+    if row["suppressed_scoring_budget"]:
+        return ("Deferred — scoring budget", "outcome-deferred")
+    if row["positive_gate_reason"] is not None and not row["positive_gate_passed"]:
+        return ("Outside target role families", "outcome-gate")
     if not row["filter_passed"]:
         reasons = format_filter_reasons(row["filter_reasons"])
         if reasons:
@@ -166,13 +190,30 @@ def compute_funnel(run_jobs):
 
     Package 5 deliberately made per-job evidence authoritative; this helper
     derives non-overlapping aggregate counts without persisting new state.
+
+    Package 8 adds pre-Claude stages: already-processed suppression,
+    positive-gate rejection, and scoring-budget deferral. The funnel is
+    ordered to reflect the actual pipeline ordering, so the operator can
+    read it as a story about how discovered jobs became scored jobs.
+
+    Same-day scoring reuse (``scoring_reused = 1``) is counted in
+    ``scoring_reused`` so the operator can distinguish a paid scoring
+    call (``scoring_attempted``) from a no-cost reuse. Reused jobs are
+    not counted under ``scoring_attempted`` because no Claude call
+    occurred.
     """
     counts = {
         "discovered": len(run_jobs),
         "filter_passed": 0,
         "filter_rejected": 0,
+        "already_processed": 0,
         "pre_score_applied": 0,
+        "positive_gate_passed": 0,
+        "positive_gate_rejected": 0,
+        "eligible_for_scoring": 0,
+        "scoring_budget_deferred": 0,
         "scoring_attempted": 0,
+        "scoring_reused": 0,
         "scoring_succeeded": 0,
         "scoring_errors": 0,
         "meets_threshold": 0,
@@ -189,8 +230,19 @@ def compute_funnel(run_jobs):
             counts["filter_passed"] += 1
         else:
             counts["filter_rejected"] += 1
+        if row["suppressed_already_processed"]:
+            counts["already_processed"] += 1
         if row["suppressed_pre_score"]:
             counts["pre_score_applied"] += 1
+        if row["positive_gate_passed"]:
+            counts["positive_gate_passed"] += 1
+            counts["eligible_for_scoring"] += 1
+        elif row["filter_passed"]:
+            counts["positive_gate_rejected"] += 1
+        if row["suppressed_scoring_budget"]:
+            counts["scoring_budget_deferred"] += 1
+        if row["scoring_reused"]:
+            counts["scoring_reused"] += 1
         if row["scoring_attempted"]:
             counts["scoring_attempted"] += 1
             if row["scoring_succeeded"]:

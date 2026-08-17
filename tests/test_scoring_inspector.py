@@ -1116,6 +1116,7 @@ class TestViewHelpers:
             "suppressed_post_resolution": 0,
             "suppressed_canonical_duplicate": 0,
             "accepted_rank": None,
+            "scoring_reused": 0,
         }
         base.update(overrides)
         return base
@@ -1189,6 +1190,7 @@ class TestViewHelpers:
             "scoring_errors": 1,
             "meets_threshold": 1,
             "below_threshold": 1,
+            "scoring_reused": 0,
         }
 
     def test_format_below_distance(self):

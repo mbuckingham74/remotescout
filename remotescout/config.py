@@ -8,6 +8,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 
+SCORING_BUDGET_DEFAULT = 15
+
+
 def load_config():
     return {
         "DATABASE_PATH": os.environ.get(
@@ -22,5 +25,8 @@ def load_config():
         "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
         "RECOMMENDATION_THRESHOLD": float(
             os.environ.get("REMOTESCOUT_RECOMMENDATION_THRESHOLD", "70")
+        ),
+        "SCORING_BUDGET": int(
+            os.environ.get("REMOTESCOUT_SCORING_BUDGET", str(SCORING_BUDGET_DEFAULT))
         ),
     }

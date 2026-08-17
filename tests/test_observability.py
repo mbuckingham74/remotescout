@@ -212,7 +212,7 @@ class TestRepresentativeFunnel:
       - discovered:               9
       - filter rejected:          2 (Plumber, Junior Designer)
       - filter passed:            7
-      - pre-score applied:        1 (Senior TPM Applied)
+      - pre-score applied:        1 (Senior Technical Program Manager Applied)
       - scoring attempted:        6
       - scoring succeeded:        5 (Below, Unresolved, PostApplied, Dup, Accepted)
       - scoring errors:           1 (Error)
@@ -231,13 +231,13 @@ class TestRepresentativeFunnel:
             connection = db.get_db()
             job_id = db.create_job(
                 connection,
-                title="Senior TPM Applied",
+                title="Senior Technical Program Manager Applied",
                 employer="Example Co.",
                 location="Anywhere in the World",
                 source="otherboard",
                 source_url="https://other.example/jobs/seeded-applied",
                 source_job_id="seeded-applied",
-                identity_key="example co. | senior tpm applied | anywhere in the world",
+                identity_key="example co. | senior technical program manager applied | anywhere in the world",
                 employer_url="https://applied.example/jobs/A",
                 requisition_id="A",
             )
@@ -248,40 +248,40 @@ class TestRepresentativeFunnel:
         return [
             make_job("Plumber", "plumber-1"),
             make_job("Junior Designer", "jd-1"),
-            make_job("Senior TPM Applied", "stpm-applied"),
-            make_job("Senior TPM Below", "stpm-below"),
-            make_job("Senior TPM Error", "stpm-error"),
-            make_job("Senior TPM Unresolved", "stpm-unresolved"),
-            make_job("Senior TPM PostApplied", "stpm-postapplied"),
-            make_job("Senior TPM Dup", "stpm-dup"),
-            make_job("Senior TPM Accepted", "stpm-accepted"),
+            make_job("Senior Technical Program Manager Applied", "stpm-applied"),
+            make_job("Senior Technical Program Manager Below", "stpm-below"),
+            make_job("Senior Technical Program Manager Error", "stpm-error"),
+            make_job("Senior Technical Program Manager Unresolved", "stpm-unresolved"),
+            make_job("Senior Technical Program Manager PostApplied", "stpm-postapplied"),
+            make_job("Senior Technical Program Manager Dup", "stpm-dup"),
+            make_job("Senior Technical Program Manager Accepted", "stpm-accepted"),
         ]
 
     def _scorer(self):
         return FakeScorer(
             results={
-                "Senior TPM Below": score_result(55, "Below threshold result."),
-                "Senior TPM PostApplied": score_result(80, "Post-applied result."),
-                "Senior TPM Dup": score_result(85, "Duplicate candidate."),
-                "Senior TPM Unresolved": score_result(75, "Unresolved candidate."),
-                "Senior TPM Accepted": score_result(90, "Accepted candidate."),
+                "Senior Technical Program Manager Below": score_result(55, "Below threshold result."),
+                "Senior Technical Program Manager PostApplied": score_result(80, "Post-applied result."),
+                "Senior Technical Program Manager Dup": score_result(85, "Duplicate candidate."),
+                "Senior Technical Program Manager Unresolved": score_result(75, "Unresolved candidate."),
+                "Senior Technical Program Manager Accepted": score_result(90, "Accepted candidate."),
             },
             failures={
-                "Senior TPM Error": ScoringError("malformed model output"),
+                "Senior Technical Program Manager Error": ScoringError("malformed model output"),
             },
         )
 
     def _resolver(self):
         return FakeResolver(
             results={
-                "Senior TPM Unresolved": failed_resolution(),
-                "Senior TPM PostApplied": ok_resolution(
+                "Senior Technical Program Manager Unresolved": failed_resolution(),
+                "Senior Technical Program Manager PostApplied": ok_resolution(
                     "https://applied.example/jobs/A", requisition_id="A"
                 ),
-                "Senior TPM Dup": ok_resolution(
+                "Senior Technical Program Manager Dup": ok_resolution(
                     "https://unique.example/jobs/B", requisition_id="B"
                 ),
-                "Senior TPM Accepted": ok_resolution(
+                "Senior Technical Program Manager Accepted": ok_resolution(
                     "https://unique.example/jobs/B", requisition_id="B"
                 ),
             },
@@ -324,36 +324,36 @@ class TestRepresentativeFunnel:
             rows_by_title["Junior Designer"]["filter_reasons"]
         )
 
-        assert rows_by_title["Senior TPM Applied"]["filter_passed"] == 1
-        assert rows_by_title["Senior TPM Applied"]["suppressed_pre_score"] == 1
-        assert rows_by_title["Senior TPM Applied"]["scoring_attempted"] == 0
+        assert rows_by_title["Senior Technical Program Manager Applied"]["filter_passed"] == 1
+        assert rows_by_title["Senior Technical Program Manager Applied"]["suppressed_pre_score"] == 1
+        assert rows_by_title["Senior Technical Program Manager Applied"]["scoring_attempted"] == 0
 
-        assert rows_by_title["Senior TPM Below"]["filter_passed"] == 1
-        assert rows_by_title["Senior TPM Below"]["scoring_attempted"] == 1
-        assert rows_by_title["Senior TPM Below"]["scoring_succeeded"] == 1
-        assert rows_by_title["Senior TPM Below"]["score"] == 55
-        assert rows_by_title["Senior TPM Below"]["meets_threshold"] == 0
-        assert rows_by_title["Senior TPM Below"]["resolution_attempted"] == 0
+        assert rows_by_title["Senior Technical Program Manager Below"]["filter_passed"] == 1
+        assert rows_by_title["Senior Technical Program Manager Below"]["scoring_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager Below"]["scoring_succeeded"] == 1
+        assert rows_by_title["Senior Technical Program Manager Below"]["score"] == 55
+        assert rows_by_title["Senior Technical Program Manager Below"]["meets_threshold"] == 0
+        assert rows_by_title["Senior Technical Program Manager Below"]["resolution_attempted"] == 0
 
-        assert rows_by_title["Senior TPM Error"]["scoring_attempted"] == 1
-        assert rows_by_title["Senior TPM Error"]["scoring_succeeded"] == 0
-        assert rows_by_title["Senior TPM Error"]["scoring_error_type"] == "ScoringError"
-        assert "malformed" in rows_by_title["Senior TPM Error"]["scoring_error_message"]
+        assert rows_by_title["Senior Technical Program Manager Error"]["scoring_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager Error"]["scoring_succeeded"] == 0
+        assert rows_by_title["Senior Technical Program Manager Error"]["scoring_error_type"] == "ScoringError"
+        assert "malformed" in rows_by_title["Senior Technical Program Manager Error"]["scoring_error_message"]
 
-        assert rows_by_title["Senior TPM Unresolved"]["resolution_attempted"] == 1
-        assert rows_by_title["Senior TPM Unresolved"]["resolution_succeeded"] == 0
+        assert rows_by_title["Senior Technical Program Manager Unresolved"]["resolution_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager Unresolved"]["resolution_succeeded"] == 0
 
-        assert rows_by_title["Senior TPM PostApplied"]["resolution_attempted"] == 1
-        assert rows_by_title["Senior TPM PostApplied"]["resolution_succeeded"] == 1
-        assert rows_by_title["Senior TPM PostApplied"]["suppressed_post_resolution"] == 1
-        assert rows_by_title["Senior TPM PostApplied"]["accepted_rank"] is None
+        assert rows_by_title["Senior Technical Program Manager PostApplied"]["resolution_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager PostApplied"]["resolution_succeeded"] == 1
+        assert rows_by_title["Senior Technical Program Manager PostApplied"]["suppressed_post_resolution"] == 1
+        assert rows_by_title["Senior Technical Program Manager PostApplied"]["accepted_rank"] is None
 
-        assert rows_by_title["Senior TPM Dup"]["resolution_attempted"] == 1
-        assert rows_by_title["Senior TPM Dup"]["resolution_succeeded"] == 1
-        assert rows_by_title["Senior TPM Dup"]["suppressed_canonical_duplicate"] == 1
-        assert rows_by_title["Senior TPM Dup"]["accepted_rank"] is None
+        assert rows_by_title["Senior Technical Program Manager Dup"]["resolution_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager Dup"]["resolution_succeeded"] == 1
+        assert rows_by_title["Senior Technical Program Manager Dup"]["suppressed_canonical_duplicate"] == 1
+        assert rows_by_title["Senior Technical Program Manager Dup"]["accepted_rank"] is None
 
-        accepted_row = rows_by_title["Senior TPM Accepted"]
+        accepted_row = rows_by_title["Senior Technical Program Manager Accepted"]
         assert accepted_row["resolution_attempted"] == 1
         assert accepted_row["resolution_succeeded"] == 1
         assert accepted_row["accepted_rank"] == 1
@@ -371,36 +371,36 @@ class TestRepresentativeFunnel:
             rows_by_title["Junior Designer"]["filter_reasons"]
         )
 
-        assert rows_by_title["Senior TPM Applied"]["filter_passed"] == 1
-        assert rows_by_title["Senior TPM Applied"]["suppressed_pre_score"] == 1
-        assert rows_by_title["Senior TPM Applied"]["scoring_attempted"] == 0
+        assert rows_by_title["Senior Technical Program Manager Applied"]["filter_passed"] == 1
+        assert rows_by_title["Senior Technical Program Manager Applied"]["suppressed_pre_score"] == 1
+        assert rows_by_title["Senior Technical Program Manager Applied"]["scoring_attempted"] == 0
 
-        assert rows_by_title["Senior TPM Below"]["filter_passed"] == 1
-        assert rows_by_title["Senior TPM Below"]["scoring_attempted"] == 1
-        assert rows_by_title["Senior TPM Below"]["scoring_succeeded"] == 1
-        assert rows_by_title["Senior TPM Below"]["score"] == 55
-        assert rows_by_title["Senior TPM Below"]["meets_threshold"] == 0
-        assert rows_by_title["Senior TPM Below"]["resolution_attempted"] == 0
+        assert rows_by_title["Senior Technical Program Manager Below"]["filter_passed"] == 1
+        assert rows_by_title["Senior Technical Program Manager Below"]["scoring_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager Below"]["scoring_succeeded"] == 1
+        assert rows_by_title["Senior Technical Program Manager Below"]["score"] == 55
+        assert rows_by_title["Senior Technical Program Manager Below"]["meets_threshold"] == 0
+        assert rows_by_title["Senior Technical Program Manager Below"]["resolution_attempted"] == 0
 
-        assert rows_by_title["Senior TPM Error"]["scoring_attempted"] == 1
-        assert rows_by_title["Senior TPM Error"]["scoring_succeeded"] == 0
-        assert rows_by_title["Senior TPM Error"]["scoring_error_type"] == "ScoringError"
-        assert "malformed" in rows_by_title["Senior TPM Error"]["scoring_error_message"]
+        assert rows_by_title["Senior Technical Program Manager Error"]["scoring_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager Error"]["scoring_succeeded"] == 0
+        assert rows_by_title["Senior Technical Program Manager Error"]["scoring_error_type"] == "ScoringError"
+        assert "malformed" in rows_by_title["Senior Technical Program Manager Error"]["scoring_error_message"]
 
-        assert rows_by_title["Senior TPM Unresolved"]["resolution_attempted"] == 1
-        assert rows_by_title["Senior TPM Unresolved"]["resolution_succeeded"] == 0
+        assert rows_by_title["Senior Technical Program Manager Unresolved"]["resolution_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager Unresolved"]["resolution_succeeded"] == 0
 
-        assert rows_by_title["Senior TPM PostApplied"]["resolution_attempted"] == 1
-        assert rows_by_title["Senior TPM PostApplied"]["resolution_succeeded"] == 1
-        assert rows_by_title["Senior TPM PostApplied"]["suppressed_post_resolution"] == 1
-        assert rows_by_title["Senior TPM PostApplied"]["accepted_rank"] is None
+        assert rows_by_title["Senior Technical Program Manager PostApplied"]["resolution_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager PostApplied"]["resolution_succeeded"] == 1
+        assert rows_by_title["Senior Technical Program Manager PostApplied"]["suppressed_post_resolution"] == 1
+        assert rows_by_title["Senior Technical Program Manager PostApplied"]["accepted_rank"] is None
 
-        assert rows_by_title["Senior TPM Dup"]["resolution_attempted"] == 1
-        assert rows_by_title["Senior TPM Dup"]["resolution_succeeded"] == 1
-        assert rows_by_title["Senior TPM Dup"]["suppressed_canonical_duplicate"] == 1
-        assert rows_by_title["Senior TPM Dup"]["accepted_rank"] is None
+        assert rows_by_title["Senior Technical Program Manager Dup"]["resolution_attempted"] == 1
+        assert rows_by_title["Senior Technical Program Manager Dup"]["resolution_succeeded"] == 1
+        assert rows_by_title["Senior Technical Program Manager Dup"]["suppressed_canonical_duplicate"] == 1
+        assert rows_by_title["Senior Technical Program Manager Dup"]["accepted_rank"] is None
 
-        accepted_row = rows_by_title["Senior TPM Accepted"]
+        accepted_row = rows_by_title["Senior Technical Program Manager Accepted"]
         assert accepted_row["scoring_attempted"] == 1
         assert accepted_row["scoring_succeeded"] == 1
         assert accepted_row["score"] == 90
@@ -418,11 +418,11 @@ class TestStrengthsGapsRoundtrip:
             strengths=["Program governance", "Budget ownership", "Cross-functional leadership"],
             gaps=["No direct fintech domain experience"],
         )
-        scorer = FakeScorer({"Senior TPM": controlled})
+        scorer = FakeScorer({"Senior Technical Program Manager": controlled})
         resolver = FakeResolver(
-            {"Senior TPM": ok_resolution("https://boards.example/jobs/1", requisition_id="1")}
+            {"Senior Technical Program Manager": ok_resolution("https://boards.example/jobs/1", requisition_id="1")}
         )
-        run_pipeline(app, FakeDiscover([make_job("Senior TPM", "stpm-1")]), scorer, resolver)
+        run_pipeline(app, FakeDiscover([make_job("Senior Technical Program Manager", "stpm-1")]), scorer, resolver)
 
         with app.app_context():
             connection = db.get_db()
@@ -442,11 +442,11 @@ class TestStrengthsGapsRoundtrip:
             strengths=[],
             gaps=[],
         )
-        scorer = FakeScorer({"Senior TPM": controlled})
+        scorer = FakeScorer({"Senior Technical Program Manager": controlled})
         resolver = FakeResolver(
-            {"Senior TPM": ok_resolution("https://boards.example/jobs/1", requisition_id="1")}
+            {"Senior Technical Program Manager": ok_resolution("https://boards.example/jobs/1", requisition_id="1")}
         )
-        run_pipeline(app, FakeDiscover([make_job("Senior TPM", "stpm-1")]), scorer, resolver)
+        run_pipeline(app, FakeDiscover([make_job("Senior Technical Program Manager", "stpm-1")]), scorer, resolver)
         with app.app_context():
             connection = db.get_db()
             run = fetch_runs(connection, DAY)[0]
@@ -506,8 +506,8 @@ class TestFatalDiscoveryFailure:
 
 class TestFatalScoringFailure:
     def test_missing_api_key_failure_records_run_failed_and_propagates(self, app):
-        jobs = [make_job("Senior TPM", "stpm-1")]
-        scorer = FakeScorer(failures={"Senior TPM": MissingApiKeyError("ANTHROPIC_API_KEY missing")})
+        jobs = [make_job("Senior Technical Program Manager", "stpm-1")]
+        scorer = FakeScorer(failures={"Senior Technical Program Manager": MissingApiKeyError("ANTHROPIC_API_KEY missing")})
         resolver = FakeResolver({})
 
         with pytest.raises(MissingApiKeyError):
@@ -550,9 +550,9 @@ class TestGenericFatalScoringFailure:
     """
 
     def test_runtime_error_in_scorer_finalizes_run_failed_and_propagates(self, app):
-        jobs = [make_job("Senior TPM", "stpm-1")]
+        jobs = [make_job("Senior Technical Program Manager", "stpm-1")]
         scorer = FakeScorer(
-            failures={"Senior TPM": RuntimeError("scoring transport failed")}
+            failures={"Senior Technical Program Manager": RuntimeError("scoring transport failed")}
         )
         resolver = FakeResolver({})
 
@@ -600,11 +600,11 @@ class TestFailedRetryPreservesFailedAttempt:
         with pytest.raises(RuntimeError):
             run_pipeline(app, first_discover, FakeScorer({}), FakeResolver({}))
 
-        scorer = FakeScorer({"Senior TPM": score_result(90)})
+        scorer = FakeScorer({"Senior Technical Program Manager": score_result(90)})
         resolver = FakeResolver(
-            {"Senior TPM": ok_resolution("https://boards.example/jobs/1", requisition_id="1")}
+            {"Senior Technical Program Manager": ok_resolution("https://boards.example/jobs/1", requisition_id="1")}
         )
-        second_discover = FakeDiscover([make_job("Senior TPM", "stpm-1")])
+        second_discover = FakeDiscover([make_job("Senior Technical Program Manager", "stpm-1")])
         recommendations = run_pipeline(app, second_discover, scorer, resolver)
         assert len(recommendations) == 1
 
@@ -629,11 +629,11 @@ class TestFailedRetryPreservesFailedAttempt:
 
 class TestCompletedDayIdempotency:
     def test_re_invocation_after_completion_does_not_record_new_run(self, app):
-        first_scorer = FakeScorer({"Senior TPM": score_result(90)})
+        first_scorer = FakeScorer({"Senior Technical Program Manager": score_result(90)})
         first_resolver = FakeResolver(
-            {"Senior TPM": ok_resolution("https://boards.example/jobs/1", requisition_id="1")}
+            {"Senior Technical Program Manager": ok_resolution("https://boards.example/jobs/1", requisition_id="1")}
         )
-        first_discover = FakeDiscover([make_job("Senior TPM", "stpm-1")])
+        first_discover = FakeDiscover([make_job("Senior Technical Program Manager", "stpm-1")])
         first = run_pipeline(app, first_discover, first_scorer, first_resolver)
         assert len(first) == 1
 

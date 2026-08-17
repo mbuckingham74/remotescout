@@ -114,6 +114,12 @@ CREATE TABLE IF NOT EXISTS pipeline_run_jobs (
     accepted_rank INTEGER,
     scoring_error_type TEXT,
     scoring_error_message TEXT,
+    suppressed_already_processed INTEGER NOT NULL DEFAULT 0,
+    positive_gate_passed INTEGER NOT NULL DEFAULT 0,
+    positive_gate_reason TEXT,
+    preselection_score INTEGER,
+    suppressed_scoring_budget INTEGER NOT NULL DEFAULT 0,
+    scoring_reused INTEGER NOT NULL DEFAULT 0,
     UNIQUE (run_id, job_id)
 );
 

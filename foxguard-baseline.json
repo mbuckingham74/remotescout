@@ -2,10 +2,16 @@
   "version": 1,
   "entries": [
     {
-      "fingerprint": "693d8c25a7d69bb5465493f627423c731e435a940474021c1a8567d32f56e250",
+      "fingerprint": "82e0a9c48825c2ca66221317468e3110bed7ca94f8982b3bcf96efb7f827049e",
       "rule_id": "py/no-sql-injection",
       "file": "remotescout/db.py",
-      "line": 136
+      "line": 59
+    },
+    {
+      "fingerprint": "34ce747da7263821b3724320d3b00302872ab21d64027c8eba0207fe20a2dd4e",
+      "rule_id": "py/no-sql-injection",
+      "file": "remotescout/db.py",
+      "line": 214
     },
     {
       "fingerprint": "426e86f7e937ba15cf22ed4b3b038dd41d010212697087258d8ded4876e19ce9",

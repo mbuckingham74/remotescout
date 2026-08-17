@@ -1,10 +1,11 @@
-from remotescout import db, filtering, resolution, scoring
+from remotescout import db, filtering, ranking, resolution, scoring, targeting
 from remotescout import resume as resume_module
 from remotescout.business_time import business_today
 from remotescout.config import load_config
 from remotescout.discovery import weworkremotely
 
 RECOMMENDATION_LIMIT = 3
+SCORING_BUDGET_KEYWORD = "scoring_budget"
 
 
 def _normalize_employer(name):
@@ -77,6 +78,16 @@ def _remember_canonical(accepted_urls, accepted_requisitions, resolved, employer
         )
 
 
+def _budget_slice(ranked, budget):
+    """Return the budgeted slice of the ranked candidate list.
+
+    Split out as a module-level function so adversarial tests can
+    monkey-patch it to demonstrate that the budget gate fails loudly
+    if any caller attempts to bypass it.
+    """
+    return ranked[:budget]
+
+
 def build_daily_recommendations(
     connection,
     recommendation_date=None,
@@ -87,6 +98,7 @@ def build_daily_recommendations(
     resume_text=None,
     threshold=None,
     source_id=None,
+    scoring_budget=None,
 ):
     """Build and persist the day's up-to-three best verified recommendations.
 
@@ -95,6 +107,29 @@ def build_daily_recommendations(
     and one :class:`pipeline_run_jobs` record per discovered job. The
     pipeline_runs row is committed before any expensive work begins so a
     crash leaves recoverable evidence.
+
+    Package 8 cost-containment ordering (before any paid scoring):
+
+    1. Discover broadly.
+    2. Suppress jobs already successfully scored in any prior run on a
+       different business date (already-processed).
+    3. Apply the existing deterministic hard-reject filter.
+    4. Apply the existing deterministic applied-job suppression.
+    5. Apply the new positive target-role gate.
+    6. For gate survivors, reuse the durable successful scoring row from
+       any prior same-date attempt when one exists. A reused job is
+       never charged to the scoring budget and never reaches
+       :func:`scoring.score_job`; the prior ``score``,
+       ``fit_explanation``, ``strengths``, ``gaps``, and
+       ``meets_threshold`` are reused verbatim so the job can continue
+       into threshold/resolution/recommendation.
+    7. Rank remaining (non-reused) candidates deterministically by
+       relevance.
+    8. Apply the hard scoring budget; mark excess rows as
+       budget-deferred. Only the budget survivors reach
+       :func:`scoring.score_job`.
+    9. Reused and freshly scored survivors are merged into a single
+       score-ordered stream that feeds resolution and recommendation.
     """
     day = recommendation_date or business_today().isoformat()
 
@@ -117,6 +152,8 @@ def build_daily_recommendations(
         resolve = resolution.resolve_job
     if threshold is None:
         threshold = config["RECOMMENDATION_THRESHOLD"]
+    if scoring_budget is None:
+        scoring_budget = config["SCORING_BUDGET"]
     scoring_model = config["ANTHROPIC_MODEL"]
 
     run_id = db.create_pipeline_run(connection, day, threshold, scoring_model)
@@ -152,8 +189,10 @@ def build_daily_recommendations(
         connection.commit()
 
         evidence = _AppliedEvidence(db.get_applied_jobs(connection))
+        already_processed = db.get_already_processed_job_ids(connection, day)
+        same_day_reused = db.get_same_day_reused_results(connection, day, run_id)
 
-        plausible = []
+        filter_passed_candidates = []
         for job_id, job in candidates:
             filter_result = filtering.filter_job(job)
             db.record_pipeline_run_job(
@@ -166,16 +205,68 @@ def build_daily_recommendations(
             )
             if not filter_result.passed:
                 continue
+            if job_id in already_processed:
+                db.mark_pipeline_run_job_suppressed_already_processed(
+                    connection, run_id, job_id
+                )
+                continue
             if _applied_before_scoring(evidence, job_id, job):
                 db.mark_pipeline_run_job_suppressed_pre_score(
                     connection, run_id, job_id
                 )
                 continue
-            plausible.append((job_id, job))
+            filter_passed_candidates.append((job_id, job))
+        connection.commit()
+
+        gate_survivors = []
+        reused_survivors = []
+        for job_id, job in filter_passed_candidates:
+            gate = targeting.evaluate(job)
+            db.record_pipeline_run_job_positive_gate(
+                connection,
+                run_id,
+                job_id,
+                gate.passed,
+                gate.reason if gate.passed else "outside_target_role_families",
+                gate.rank_points,
+            )
+            if not gate.passed:
+                continue
+            if job_id in same_day_reused:
+                reused_payload = same_day_reused[job_id]
+                db.mark_pipeline_run_job_scoring_reused(
+                    connection,
+                    run_id,
+                    job_id,
+                    reused_payload["score"],
+                    reused_payload["fit_explanation"],
+                    reused_payload["strengths"],
+                    reused_payload["gaps"],
+                    reused_payload["meets_threshold"],
+                )
+                reused_survivors.append((job_id, job, reused_payload))
+                continue
+            gate_survivors.append((job_id, job, gate.reason, gate.rank_points))
+        connection.commit()
+
+        ranked = ranking.rank_candidates(
+            [(job_id, job) for job_id, job, _reason, _points in gate_survivors]
+        )
+        ranked_for_run = [
+            (candidate.job_id, candidate.job, candidate.gate_reason, candidate.relevance_score)
+            for candidate in ranked
+        ]
+
+        budgeted = _budget_slice(ranked_for_run, scoring_budget)
+        deferred = ranked_for_run[scoring_budget:]
+        for job_id, _job, _reason, _points in deferred:
+            db.mark_pipeline_run_job_suppressed_scoring_budget(
+                connection, run_id, job_id
+            )
         connection.commit()
 
         scored = []
-        for job_id, job in plausible:
+        for job_id, job, _reason, _points in budgeted:
             try:
                 result = score(job, resume_text)
             except scoring.MissingApiKeyError as error:
@@ -223,6 +314,17 @@ def build_daily_recommendations(
             if not scoring.meets_threshold(result, threshold):
                 continue
             scored.append((job_id, job, result))
+
+        for job_id, job, reused_payload in reused_survivors:
+            if not reused_payload["meets_threshold"]:
+                continue
+            reused_result = scoring.ScoreResult(
+                score=reused_payload["score"],
+                fit_explanation=reused_payload["fit_explanation"],
+                strengths=reused_payload["strengths"],
+                gaps=reused_payload["gaps"],
+            )
+            scored.append((job_id, job, reused_result))
 
         ranked = sorted(scored, key=lambda item: (-item[2].score, item[0]))
 
